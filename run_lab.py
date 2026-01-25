@@ -115,8 +115,7 @@ def run_lab(op_folder, epoch = 1000, warm_up = True, warm_epoch = 100):
 if __name__ == "__main__":
     import sys
     
-    # 默认跑向量加法
-    target_op = "01-vector-addition"
+    target_op = "02-matrix-addition"
     
     # 如果命令行传了参数，比如 python run_lab.py 02-rms-norm
     if len(sys.argv) > 1:
