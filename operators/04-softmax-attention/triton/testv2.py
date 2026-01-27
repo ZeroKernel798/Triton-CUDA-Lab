@@ -81,8 +81,8 @@ def softmax_attention(Q_ptr, K_ptr, V_ptr, OUT_ptr,
 
 # Q, K, V, output are tensors on the GPU
 def solve(Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, output: torch.Tensor, M: int, N: int, d: int):    
-    BLOCKSIZE_M = 32
-    BLOCKSIZE_N = 64
+    BLOCKSIZE_M = 16
+    BLOCKSIZE_N = 32
     BLOCKSIZE_d = 32 if d <= 32 else (64 if d <= 64 else 128)
     
     # 不应该对维度d分块 否则无法同步整行的最大值求出softmax

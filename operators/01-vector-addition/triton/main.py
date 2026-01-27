@@ -23,3 +23,9 @@ def kernel(a_ptr, b_ptr, c_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
     
     # 写回
     tl.store(c_ptr + offsets, output, mask=mask)
+
+# a, b, c are tensors on the GPU
+def solve(A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, N: int):
+    BLOCK_SIZE = 256
+    grid = (triton.cdiv(N, BLOCK_SIZE),)
+    kernel[grid](A, B, C, N, BLOCK_SIZE)

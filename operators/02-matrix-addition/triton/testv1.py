@@ -13,4 +13,10 @@ def kernel(a_ptr, b_ptr, c_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
     c_data = a_data + b_data
     tl.store(c_ptr + offsets, c_data, mask=mask)
 
-
+# a, b, c are tensors on the GPU
+def solve(A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, N: int):
+    BLOCK_SIZE = 1024
+    n_elements = N * N
+    grid = (triton.cdiv(n_elements, BLOCK_SIZE),)
+    # 内部调用 kernel 时，变量名跟着改就行
+    kernel[grid](A, B, C, n_elements, BLOCK_SIZE)

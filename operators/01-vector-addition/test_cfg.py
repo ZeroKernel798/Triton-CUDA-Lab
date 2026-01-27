@@ -4,32 +4,37 @@ from typing import Any, Dict, List
 
 class OperatorSpec:
     def __init__(self):
+        # 严格对齐 LeetGPU 初始化
         self.name = "Vector Addition"
         self.atol = 1e-05
         self.rtol = 1e-05
-        self.dtype = torch.float32
 
-    def reference(self, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, N: int):
-        """PyTorch 标准实现用于精度对比"""
+    def reference_impl(self, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, N: int):
+        assert A.shape == B.shape == C.shape
+        assert A.dtype == B.dtype == C.dtype
+        assert A.device == B.device == C.device
+
         torch.add(A, B, out=C)
-        return C
 
-    def get_cuda_args(self, test_case: Dict[str, Any]):
-        """
-        适配 run_lab.py 的 CUDA 参数传递
-        test_case 是从下面的 generate_xxx 拿到的字典
-        """
-        A, B, C, N = test_case["A"], test_case["B"], test_case["C"], test_case["N"]
-        return [A, B, C, N], [None, None, None, ctypes.c_size_t]
-
-    def get_triton_args(self, test_case: Dict[str, Any]):
-        """适配 run_lab.py 的 Triton 参数传递"""
+    def get_solve_signature(self) -> Dict[str, tuple]:
         return {
-            "a_ptr": test_case["A"],
-            "b_ptr": test_case["B"],
-            "c_ptr": test_case["C"],
-            "n_elements": test_case["N"],
-            "BLOCK_SIZE": 1024
+            "A": (ctypes.POINTER(ctypes.c_float), "in"),
+            "B": (ctypes.POINTER(ctypes.c_float), "in"),
+            "C": (ctypes.POINTER(ctypes.c_float), "out"),
+            "N": (ctypes.c_size_t, "in"),
+        }
+
+    def generate_example_test(self) -> Dict[str, Any]:
+        dtype = torch.float32
+        N = 4
+        A = torch.tensor([1.0, 2.0, 3.0, 4.0], device="cuda", dtype=dtype)
+        B = torch.tensor([5.0, 6.0, 7.0, 8.0], device="cuda", dtype=dtype)
+        C = torch.empty(N, device="cuda", dtype=dtype)
+        return {
+            "A": A,
+            "B": B,
+            "C": C,
+            "N": N,
         }
 
     def generate_functional_test(self) -> List[Dict[str, Any]]:
@@ -85,12 +90,11 @@ class OperatorSpec:
         return test_cases
 
     def generate_performance_test(self) -> Dict[str, Any]:
-        """性能测试：2500万级别的大规模向量，榨干带宽"""
-        N = 25000000
+        dtype = torch.float32
+        N = 1024
         return {
-            "name": "large_vector_bench",
-            "A": torch.empty(N, device="cuda", dtype=self.dtype).uniform_(-100.0, 100.0),
-            "B": torch.empty(N, device="cuda", dtype=self.dtype).uniform_(-100.0, 100.0),
-            "C": torch.zeros(N, device="cuda", dtype=self.dtype),
+            "A": torch.empty(N, device="cuda", dtype=dtype).uniform_(-1000.0, 1000.0),
+            "B": torch.empty(N, device="cuda", dtype=dtype).uniform_(-1000.0, 1000.0),
+            "C": torch.zeros(N, device="cuda", dtype=dtype),
             "N": N,
         }
