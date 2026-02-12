@@ -109,5 +109,5 @@ def run_lab(op_folder, epoch=1000):
     logger.plot(op_folder)
 
 if __name__ == "__main__":
-    target = sys.argv[1] if len(sys.argv) > 1 else "04-softmax-attention"
+    target = sys.argv[1] if len(sys.argv) > 1 else "05-reduction"
     run_lab(target)
