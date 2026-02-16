@@ -1,53 +1,73 @@
 import os
-import subprocess
-import ctypes
-import importlib.util
 import sys
+import importlib
+import hashlib
+from torch.utils.cpp_extension import load
 
 class KernelEngine:
     @staticmethod
-    def setup_cuda(cu_file):
-        """
-        编译 CUDA 文件并返回 ctypes CDLL 对象
-        """
-        so_file = cu_file.replace('.cu', '.so')
-        
-        # 简单编译指令：编译为共享库
-        # -Xcompiler -fPIC 是必须的，这样 Python 才能加载
-        compile_cmd = [
-            "nvcc", "-O3", "--shared", "-Xcompiler", "-fPIC",
-            cu_file, "-o", so_file
-        ]
-        
-        # 检查是否需要重新编译 (简单逻辑：源码比库新就重编)
-        if not os.path.exists(so_file) or os.path.getmtime(cu_file) > os.path.getmtime(so_file):
-            result = subprocess.run(compile_cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                raise Exception(f"CUDA Compilation Failed: {result.stderr}")
-        
-        # 使用 ctypes 加载
-        lib = ctypes.CDLL(os.path.abspath(so_file))
-        return lib
+    def get_md5(file_path):
+        with open(file_path, 'rb') as f:
+            return hashlib.md5(f.read()).hexdigest()
 
     @staticmethod
-    def setup_triton(py_file):
-        """
-        动态加载 Triton 的 Python 文件作为模块返回
-        """
-        module_name = os.path.basename(py_file).replace('.py', '')
+    def setup_cuda(cu_file):
+        # 1. 生成唯一识别符：获取算子文件夹名 + 文件名
+        # 例如: operators/04-softmax-attention/cuda/testv1.cu 
+        # 会变成: 04_softmax_attention_testv1
+        abs_path = os.path.abspath(cu_file)
+        path_parts = abs_path.split(os.sep)
+        # 通常算子名在倒数第三级 (operators -> [op_name] -> cuda -> [file.cu])
+        op_name = path_parts[-3] if len(path_parts) > 3 else "default"
+        file_base = os.path.basename(cu_file).replace('.cu', '')
         
-        # 使用 importlib 动态加载文件
-        spec = importlib.util.spec_from_file_location(module_name, py_file)
-        module = importlib.util.module_from_spec(spec)
+        # 组合成唯一的模块名，去掉非法字符
+        module_name = f"{op_name}_{file_base}".replace('-', '_').replace('.', '_')
         
-        # 这一步极其重要：必须执行模块，否则里面的 solve 函数还没被定义
-        try:
-            spec.loader.exec_module(module)
-        except Exception as e:
-            raise Exception(f"Failed to exec Triton module: {e}")
+        # 2. 对应的 build 目录也区分开
+        build_dir = os.path.join(os.getcwd(), "build", op_name, file_base)
+        os.makedirs(build_dir, exist_ok=True)
+        
+        # 3. 必须把具体的 build_dir 加进路径
+        if build_dir not in sys.path:
+            sys.path.append(build_dir)
+
+        # 4. MD5 逻辑保持，但针对唯一路径
+        cu_md5 = KernelEngine.get_md5(abs_path)
+        md5_file = os.path.join(build_dir, "source.md5")
+        
+        if os.path.exists(md5_file):
+            with open(md5_file, 'r') as f:
+                if f.read() == cu_md5:
+                    try:
+                        # 尝试加载
+                        if module_name in sys.modules:
+                            return sys.modules[module_name]
+                        return importlib.import_module(module_name)
+                    except Exception:
+                        pass
+
+        # 5. 编译流程
+        os.environ["MAX_JOBS"] = str(os.cpu_count())
+        print(f"🔧 [Compiler] Target: {module_name} | Dir: {op_name}")
+        
+        module = load(
+            name=module_name,
+            sources=[abs_path],
+            extra_cflags={
+                'cxx': ['-O3'],
+                'nvcc': [
+                    '-O3', 
+                    '--use_fast_math', 
+                    '--threads', '8',
+                    '-Xcompiler', '-j8'
+                ]
+            },
+            build_directory=build_dir,
+            verbose=False
+        )
+
+        with open(md5_file, 'w') as f:
+            f.write(cu_md5)
             
-        # 检查模块里有没有 solve 函数
-        if not hasattr(module, 'solve'):
-            raise AttributeError(f"模块 {module_name} 中未找到 'solve' 函数！")
-            
-        return module # 返回整个模块，这样才能拿到 module.solve
+        return module

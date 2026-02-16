@@ -1,13 +1,20 @@
 #include <cuda_runtime.h>
+#include <torch/extension.h>
 
-__global__ void matrix_add(const float* A, const float* B, float* C, int Ne) {
+// 1. CUDA Kernel 保持不变，使用线性索引处理 float4
+__global__ void matrix_add_vec_kernel(const float* A, const float* B, float* C, int Ne) {
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
     int offset = tid * 4;
 
     if (offset + 3 < Ne) {
-        // 直接用 tid 索引 float4 指针，编译器会自动处理 *16 的偏移
-        float4 Av = reinterpret_cast<const float4*>(A)[tid];
-        float4 Bv = reinterpret_cast<const float4*>(B)[tid];
+        // 利用 tid 索引 float4 指针，实现 128-bit 向量化加载/存储
+        // [Image of CUDA float4 memory alignment and vectorized access]
+        const float4* Av_ptr = reinterpret_cast<const float4*>(A);
+        const float4* Bv_ptr = reinterpret_cast<const float4*>(B);
+        float4* Cv_ptr = reinterpret_cast<float4*>(C);
+
+        float4 Av = Av_ptr[tid];
+        float4 Bv = Bv_ptr[tid];
         
         float4 Cv;
         Cv.x = Av.x + Bv.x;
@@ -15,23 +22,36 @@ __global__ void matrix_add(const float* A, const float* B, float* C, int Ne) {
         Cv.z = Av.z + Bv.z;
         Cv.w = Av.w + Bv.w;
 
-        reinterpret_cast<float4*>(C)[tid] = Cv;
+        Cv_ptr[tid] = Cv;
     } 
     else if (offset < Ne) {
-        // 处理末尾不足 4 个的部分
+        // 边界处理：处理末尾不足 4 个的部分
         for (int i = offset; i < Ne; i++) {
             C[i] = A[i] + B[i];
         }
     }
 }
 
-// A, B, C are device pointers (i.e. pointers to memory on the GPU)
-extern "C" void solve(const float* A, const float* B, float* C, int N) {
+// 2. Pybind11 接口函数，接收 torch::Tensor
+void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N) {
+    // 自动解包为扁平化后的总元素数量 Ne = N * N
     int Ne = N * N;
+    
+    // 提取 raw 指针
+    const float* d_A = A.data_ptr<float>();
+    const float* d_B = B.data_ptr<float>();
+    float* d_C = C.data_ptr<float>();
+
+    // 计算执行配置
     int threadsPerBlock = 256;
-    int n_vec = (Ne + 3) / 4; // float4向量的个数
+    int n_vec = (Ne + 3) / 4; // 计算需要多少个 float4 向量
     int blocksPerGrid = (n_vec + threadsPerBlock - 1) / threadsPerBlock;
-    matrix_add<<<blocksPerGrid, threadsPerBlock>>>(A, B, C, Ne);
-    // cudaDeviceSynchronize();
+
+    // 启动内核
+    matrix_add_vec_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, Ne);
 }
 
+// 3. 定义 Pybind11 模块
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("solve", &solve, "Flattened Matrix Addition with float4 vectorization");
+}

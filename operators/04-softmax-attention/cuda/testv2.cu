@@ -1,9 +1,13 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#include <torch/extension.h>
 #include <float.h>
 #include <math.h>
 
-
+// -----------------------------------------------------------------------
+// Flash Attention Ultra Kernel
+// 保持你极致优化的计算逻辑不变
+// -----------------------------------------------------------------------
 template<int Br, int Bc, int max_d>
 __global__ void flash_attn_ultra_kernel(
     const float* Q, const float* K, const float* V, float* O,
@@ -27,7 +31,6 @@ __global__ void flash_attn_ultra_kernel(
         r_q[i] = 0.0f;
     }
 
-    // m 和 l 现在都在 log2 空间或受其缩放影响
     float m_prev = -FLT_MAX;
     float l_prev = 0.0f;
 
@@ -66,17 +69,13 @@ __global__ void flash_attn_ultra_kernel(
                     dot += __shfl_xor_sync(0xffffffff, dot, mask);
                 }
 
-                // --- 极致优化区 ---
-                // 直接计算基于 log2 的 score
                 float score = dot * attention_scale; 
-
                 float m_new = fmaxf(m_prev, score);
                 
-                // 使用硬件指令 __exp2f，输入已经是 log2 比例
+                // 使用硬件指令 exp2f
                 float alpha = exp2f(m_prev - m_new);
                 float p = exp2f(score - m_new);
 
-                // 使用 FMA (Fused Multiply-Add) 指令加速累加器更新
                 l_prev = __fmaf_rn(l_prev, alpha, p);
 
                 #pragma unroll
@@ -90,7 +89,6 @@ __global__ void flash_attn_ultra_kernel(
     }
 
     if (row < M) {
-        // 使用 __frcp_rn (快速倒数指令) 进一步压榨性能
         float inv_l = __frcp_rn(l_prev);
         #pragma unroll
         for (int i = 0; i < cols_per_thread; i++) {
@@ -100,8 +98,11 @@ __global__ void flash_attn_ultra_kernel(
     }
 }
 
-extern "C" void solve(const float* Q, const float* K, const float* V, float* output, 
-                      int M, int N, int d) 
+// -----------------------------------------------------------------------
+// Pybind11 接口函数
+// -----------------------------------------------------------------------
+void solve(torch::Tensor Q, torch::Tensor K, torch::Tensor V, torch::Tensor output, 
+           int M, int N, int d) 
 {
     const int Br = 16; 
     const int Bc = 32;
@@ -109,12 +110,23 @@ extern "C" void solve(const float* Q, const float* K, const float* V, float* out
     dim3 grid((M + Br - 1) / Br);
     dim3 block(32, Br); 
 
+    // 动态计算共享内存
     size_t smem_size = (Bc * d + Bc * d) * sizeof(float);
 
-    // 关键：预先将 log2(e) 乘入 scale，减少内核中每一步的计算量
+    // 预缩放 scale 以便使用硬件 exp2f
     float attention_scale = (1.0f / sqrtf((float)d)) * 1.4426950408889634074f;
 
+    // 启动内核，假设 d <= 128
     flash_attn_ultra_kernel<16, 32, 128><<<grid, block, smem_size>>>(
-        Q, K, V, output, M, N, d, attention_scale
+        Q.data_ptr<float>(), 
+        K.data_ptr<float>(), 
+        V.data_ptr<float>(), 
+        output.data_ptr<float>(), 
+        M, N, d, attention_scale
     );
+}
+
+// 模块定义
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("solve", &solve, "Flash Attention Ultra (CUDAized)");
 }

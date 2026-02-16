@@ -1,45 +1,58 @@
 #include <cuda_runtime.h>
+#include <torch/extension.h>
 
-__global__ void matrix_add(const float* A, const float* B, float* C, int N) 
+// 1. 内核保持不变，负责 X 方向的向量化处理
+__global__ void matrix_add_kernel_vec(const float* A, const float* B, float* C, int N) 
 {
-    // 矩阵加法 采用float4进行加速 x方向一个线程负责一个float4 y负责一个float
+    // x_base 是 float4 的索引
     int x_base = blockDim.x * blockIdx.x + threadIdx.x;
     int x = x_base * 4;
     int y = blockDim.y * blockIdx.y + threadIdx.y;
 
-    if(x >= N || y >= N) return ;
-    if((x + 3) < N && (y * N) % 4 == 0){
-        // float4处理
-        const float4* A_data = reinterpret_cast<const float4*>(&(A[y * N + x]));
-        const float4* B_data = reinterpret_cast<const float4*>(&(B[y * N + x]));
-        float4* C_data = reinterpret_cast<float4*>(&(C[y * N + x]));
+    if(x >= N || y >= N) return;
 
-        float4 A_val = *A_data;
-        float4 B_val = *B_data;
-        float4 C_val;
+    // 检查对齐：起始位置必须是 4 的倍数且剩余长度足够
+    // (y * N + x) % 4 == 0 保证了 16 字节对齐
+    if((x + 3) < N && ((y * N + x) % 4 == 0)){
+        const float4* A_ptr = reinterpret_cast<const float4*>(&(A[y * N + x]));
+        const float4* B_ptr = reinterpret_cast<const float4*>(&(B[y * N + x]));
+        float4* C_ptr = reinterpret_cast<float4*>(&(C[y * N + x]));
 
-        // 开始加法计算
-        C_val.x = A_val.x + B_val.x;
-        C_val.y = A_val.y + B_val.y;
-        C_val.z = A_val.z + B_val.z;
-        C_val.w = A_val.w + B_val.w;
+        float4 a = *A_ptr;
+        float4 b = *B_ptr;
+        float4 c;
 
-        *C_data = C_val; 
+        c.x = a.x + b.x;
+        c.y = a.y + b.y;
+        c.z = a.z + b.z;
+        c.w = a.w + b.w;
+
+        *C_ptr = c;
     }
-    else{
-        // float处理
-        for(int i = x; i < N; i++){
+    else {
+        // Fallback: 处理边界或非对齐部分
+        for(int i = x; i < x + 4 && i < N; i++){
             C[y * N + i] = A[y * N + i] + B[y * N + i];
         }
     }
 }
 
-// A, B, C are device pointers (i.e. pointers to memory on the GPU)
-extern "C" void solve(const float* A, const float* B, float* C, int N) {
-    int n_vec = (N + 3) / 4; // N个数据对应的float4向量个数
-    dim3 threadsPerBlock(16, 16);
-    dim3 blocksPerGrid((n_vec+15)/16, (N+15)/16);
+// 2. Pybind11 接口函数
+void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N) {
+    const float* d_A = A.data_ptr<float>();
+    const float* d_B = B.data_ptr<float>();
+    float* d_C = C.data_ptr<float>();
 
-    matrix_add<<<blocksPerGrid, threadsPerBlock>>>(A, B, C, N);
-    // cudaDeviceSynchronize();
+    // 一个线程负责 4 个 float
+    int n_vec = (N + 3) / 4; 
+    
+    dim3 threadsPerBlock(16, 16);
+    dim3 blocksPerGrid((n_vec + 15) / 16, (N + 15) / 16);
+
+    matrix_add_kernel_vec<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, N);
+}
+
+// 3. 模块定义
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("solve", &solve, "Matrix Addition with float4 vectorization");
 }

@@ -6,6 +6,7 @@ class OperatorSpec:
     def __init__(self):
         # 严格对齐 LeetGPU 初始化
         self.name = "Vector Addition"
+        self.output_name = "C"  
         self.atol = 1e-05
         self.rtol = 1e-05
 
@@ -16,13 +17,9 @@ class OperatorSpec:
 
         torch.add(A, B, out=C)
 
-    def get_solve_signature(self) -> Dict[str, tuple]:
-        return {
-            "A": (ctypes.POINTER(ctypes.c_float), "in"),
-            "B": (ctypes.POINTER(ctypes.c_float), "in"),
-            "C": (ctypes.POINTER(ctypes.c_float), "out"),
-            "N": (ctypes.c_size_t, "in"),
-        }
+    def get_solve_signature(self) -> List[str]:
+        # 只需要返回参数名称的顺序，Pybind11 会根据位置匹配
+        return ["A", "B", "C", "N"]
 
     def generate_example_test(self) -> Dict[str, Any]:
         dtype = torch.float32
@@ -91,7 +88,8 @@ class OperatorSpec:
 
     def generate_performance_test(self) -> Dict[str, Any]:
         dtype = torch.float32
-        N = 1024
+        # 改成这个规模，Orin 才能跑出带宽效果
+        N = 1024 * 1024 
         return {
             "A": torch.empty(N, device="cuda", dtype=dtype).uniform_(-1000.0, 1000.0),
             "B": torch.empty(N, device="cuda", dtype=dtype).uniform_(-1000.0, 1000.0),

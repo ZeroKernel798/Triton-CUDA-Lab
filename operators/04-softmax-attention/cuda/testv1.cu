@@ -1,38 +1,34 @@
 #include <cuda_runtime.h>
+#include <torch/extension.h>
 #include <float.h>
 #include <math.h>
-#include <device_launch_parameters.h>
 
 // -----------------------------------------------------------------------
 // Flash Attention Kernel
-// 支持任意 M, N, d (带边界检查)
+// 保持你的逻辑不变，仅将 max_d 设为模板参数以优化寄存器分配
 // -----------------------------------------------------------------------
 template<int Br, int Bc, int max_d>
 __global__ void flash_attn_kernel(
     const float* Q, const float* K, const float* V, float* O,
     int M, int N, int d, float scale) 
 {
-    // 1. 声明共享内存 (Q 固定一块, K/V 滚动)
-    // 使用一维数组避免二维索引的复杂对齐问题
     extern __shared__ float s_mem[];
-    float* s_Q = s_mem;                  // 大小: Br * d
-    float* s_K = s_mem + Br * d;         // 大小: Bc * d
-    float* s_V = s_mem + (Br + Bc) * d;  // 大小: Bc * d
+    float* s_Q = s_mem;                  
+    float* s_K = s_mem + Br * d;         
+    float* s_V = s_mem + (Br + Bc) * d;  
 
-    int tid = threadIdx.x; // 这里建议用 1D 线程布局 (Br 个线程)，每人负责一行 Q
+    int tid = threadIdx.x; 
     int bid = blockIdx.x;
     int q_row_start = bid * Br;
     int row = q_row_start + tid;
 
-    // 2. 寄存器初始化 (每个线程维护自己这一行的 Online Softmax 状态)
     float m_prev = -FLT_MAX;
     float l_prev = 0.0f;
-    float acc[max_d]; // 寄存器中缓存这一行的结果
+    float acc[max_d]; 
     #pragma unroll
     for (int k = 0; k < max_d; k++) acc[k] = 0.0f;
 
-    // 3. 加载 Q 到 Shared Memory (协作加载)
-    // 每个线程搬运 Q 的一部分数据
+    // 协作加载 Q
     for (int i = tid; i < Br * d; i += Br) {
         int r = i / d;
         int c = i % d;
@@ -43,10 +39,8 @@ __global__ void flash_attn_kernel(
     }
     __syncthreads();
 
-    // 4. 外层大循环：遍历 K, V 的所有分块 (Tiles)
     for (int j = 0; j < N; j += Bc) {
-        
-        // 协作加载 K 和 V 块到 Shared Memory
+        // 协作加载 K 和 V
         for (int i = tid; i < Bc * d; i += Br) {
             int r = i / d;
             int c = i % d;
@@ -60,32 +54,26 @@ __global__ void flash_attn_kernel(
         }
         __syncthreads();
 
-        // 计算当前线程负责的这一行 Q 与当前 K 块的所有点积
         if (row < M) {
             for (int t = 0; t < Bc; t++) {
-                if (j + t >= N) break; // 边界检查
+                if (j + t >= N) break; 
 
-                // 计算 S = Q_i * K_t^T
                 float score = 0.0f;
                 for (int k = 0; k < d; k++) {
                     score += s_Q[tid * d + k] * s_K[t * d + k];
                 }
                 score *= scale;
 
-                // --- Online Softmax 核心步骤 ---
-                // $m_{new} = \max(m_{old}, score)$
+                // Online Softmax 逻辑
                 float m_new = fmaxf(m_prev, score);
-                // $e^{score - m_{new}}$
                 float p = __expf(score - m_new);
-                // 调整系数 $\alpha = e^{m_{old} - m_{new}}$
                 float alpha = __expf(m_prev - m_new);
 
-                // 更新归一化因子 $l_{new} = l_{old} \cdot \alpha + p$
                 l_prev = l_prev * alpha + p;
 
-                // 更新结果累加器 $acc = acc \cdot \alpha + p \cdot V_t$
-                for (int k = 0; k < d; k++) {
-                    acc[k] = acc[k] * alpha + p * s_V[t * d + k];
+                #pragma unroll
+                for (int k = 0; k < max_d; k++) {
+                    if (k < d) acc[k] = acc[k] * alpha + p * s_V[t * d + k];
                 }
                 m_prev = m_new;
             }
@@ -93,7 +81,6 @@ __global__ void flash_attn_kernel(
         __syncthreads();
     }
 
-    // 5. 写回结果到全局显存
     if (row < M) {
         for (int k = 0; k < d; k++) {
             O[row * d + k] = acc[k] / l_prev;
@@ -102,27 +89,34 @@ __global__ void flash_attn_kernel(
 }
 
 // -----------------------------------------------------------------------
-// 包装器函数 (Host Side)
+// Pybind11 接口函数
 // -----------------------------------------------------------------------
-extern "C" void solve(const float* Q, const float* K, const float* V, float* output, 
-                      int M, int N, int d) 
+void solve(torch::Tensor Q, torch::Tensor K, torch::Tensor V, torch::Tensor O,
+           int M, int N, int d) 
 {
-    const int Br = 32; // 每个 Block 处理 32 行 Q
-    const int Bc = 32; // 每次加载 32 行 K, V
+    // 获取设备指针
+    const float* d_Q = Q.data_ptr<float>();
+    const float* d_K = K.data_ptr<float>();
+    const float* d_V = V.data_ptr<float>();
+    float* d_O = O.data_ptr<float>();
 
-    // 修正 1：Grid 尺寸必须向上取整，否则小矩阵会启动 0 个 Block
+    const int Br = 32; 
+    const int Bc = 32; 
+
     dim3 grid((M + Br - 1) / Br);
-    dim3 block(Br); // 简单的 1D 布局，每个线程负责一行
+    dim3 block(Br); 
 
-    // 修正 2：根据 d 动态计算共享内存需求
+    // 动态计算共享内存：(Br*d + Bc*d + Bc*d) * sizeof(float)
     size_t smem_size = (Br * d + Bc * d + Bc * d) * sizeof(float);
-
     float scale = 1.0f / sqrtf((float)d);
 
-    // 修正 3：针对测试用例 d=4，通过模板传递 max_d（实际可设为 128 或动态）
-    // 为了通过你的测试，这里硬编码 max_d 为 128 (足够覆盖 d=4)
+    // 针对 d <= 128 的情况启动内核
     flash_attn_kernel<Br, Bc, 128><<<grid, block, smem_size>>>(
-        Q, K, V, output, M, N, d, scale
+        d_Q, d_K, d_V, d_O, M, N, d, scale
     );
+}
 
+// 模块定义
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("solve", &solve, "Flash Attention Kernel (CUDA)");
 }
