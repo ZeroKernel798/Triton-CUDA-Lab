@@ -9,26 +9,21 @@ __global__ void vector_add_kernel(const float* A, const float* B, float* C, int6
 }
 
 // 2. 编写包装函数 (不再需要手动在 Python 端搞 data_ptr)
-void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int64_t N) {
+void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int64_t N, int block_size) {
     
-    // 安全检查：Pybind 会在报错时给出非常清晰的提示，而不是直接段错误崩溃
     TORCH_CHECK(A.is_cuda(), "Tensor A must be on CUDA");
-    TORCH_CHECK(A.dtype() == torch::kFloat32, "Tensor A must be Float32");
-    TORCH_CHECK(A.is_contiguous(), "Tensor A must be contiguous"); // 确保内存连续
+    TORCH_CHECK(A.is_contiguous(), "Tensor A must be contiguous");
 
-    int threadsPerBlock = 256;
+    // 修改点 B：不再写死 256，而是使用传入的参数
+    int threadsPerBlock = block_size;
     int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
     
-    // 关键点：使用 .data_ptr<float>() 直接拿到 PyTorch 内部的显存指针
     vector_add_kernel<<<blocksPerGrid, threadsPerBlock>>>(
         A.data_ptr<float>(), 
         B.data_ptr<float>(), 
         C.data_ptr<float>(), 
         N
     );
-    
-    // 注意：如果是为了性能测试，这里通常不需要 cudaDeviceSynchronize
-    // 因为 PyTorch 的 Stream 机制会自动管理同步
 }
 
 // 3. 定义 Pybind11 模块入口

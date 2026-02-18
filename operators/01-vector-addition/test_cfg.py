@@ -4,23 +4,47 @@ from typing import Any, Dict, List
 
 class OperatorSpec:
     def __init__(self):
-        # 严格对齐 LeetGPU 初始化
         self.name = "Vector Addition"
-        self.output_name = "C"  
+        self.output_name = "C"
         self.atol = 1e-05
         self.rtol = 1e-05
+        self.arg_names = ["A", "B", "C", "N", "block_size"]
+        # 数据规模测试
+        self.x_vals = [2**i for i in range(12, 25)]
+        # 核函数参数调优
+        # 针对triton
+        self.tuning_configs = [
+            {"BLOCK_SIZE": 32, "num_warps": 2},
+            {"BLOCK_SIZE": 64, "num_warps": 4},
+            {"BLOCK_SIZE": 128, "num_warps": 4},
+            {"BLOCK_SIZE": 256, "num_warps": 8},
+        ]
+        # 针对cuda
+        self.cuda_tuning_configs = [
+            {"block_size": 32},   # 最小 warp
+            {"block_size": 128},
+            {"block_size": 256},  # 默认值
+            {"block_size": 512},
+            {"block_size": 1024}, # 最大值
+        ]
 
-    def reference_impl(self, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, N: int):
+    def get_throughput(self, n, ms):
+        # 向量加法吞吐量计算
+        return (n * 4 * 3) / 1e9 / (ms / 1000)
+
+    # pytorch标准
+    def reference_impl(self, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, N: int, **kwargs):
         assert A.shape == B.shape == C.shape
         assert A.dtype == B.dtype == C.dtype
         assert A.device == B.device == C.device
 
         torch.add(A, B, out=C)
 
+     # 只需要返回参数名称的顺序，Pybind11 会根据位置匹配
     def get_solve_signature(self) -> List[str]:
-        # 只需要返回参数名称的顺序，Pybind11 会根据位置匹配
-        return ["A", "B", "C", "N"]
+        return self.arg_names
 
+    # 生成最简单的测试案例 最小闭环逻辑验证
     def generate_example_test(self) -> Dict[str, Any]:
         dtype = torch.float32
         N = 4
@@ -32,6 +56,7 @@ class OperatorSpec:
             "B": B,
             "C": C,
             "N": N,
+            "block_size": 256, 
         }
 
     def generate_functional_test(self) -> List[Dict[str, Any]]:
@@ -66,6 +91,7 @@ class OperatorSpec:
                     "B": torch.tensor(b_vals, device="cuda", dtype=dtype),
                     "C": torch.zeros(n, device="cuda", dtype=dtype),
                     "N": n,
+                    "block_size": 256, 
                 }
             )
 
@@ -81,18 +107,20 @@ class OperatorSpec:
                     "B": torch.empty(size, device="cuda", dtype=dtype).uniform_(*b_range),
                     "C": torch.zeros(size, device="cuda", dtype=dtype),
                     "N": size,
+                    "block_size": 256, 
                 }
             )
 
         return test_cases
 
-    def generate_performance_test(self) -> Dict[str, Any]:
+    def generate_performance_test(self, N=1024*1024) -> Dict[str, Any]:
         dtype = torch.float32
-        # 改成这个规模，Orin 才能跑出带宽效果
-        N = 1024 * 1024 
         return {
-            "A": torch.empty(N, device="cuda", dtype=dtype).uniform_(-1000.0, 1000.0),
-            "B": torch.empty(N, device="cuda", dtype=dtype).uniform_(-1000.0, 1000.0),
+            "A": torch.empty(N, device="cuda", dtype=dtype).uniform_(-1.0, 1.0),
+            "B": torch.empty(N, device="cuda", dtype=dtype).uniform_(-1.0, 1.0),
             "C": torch.zeros(N, device="cuda", dtype=dtype),
             "N": N,
+            "block_size": 256, # 默认值，会被 tuning 模式覆盖
+            "BLOCK_SIZE": 256, # Triton 默认值
+            "num_warps": 4     # Triton 默认值
         }

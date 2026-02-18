@@ -32,7 +32,7 @@ __global__ void vector_add_float4_kernel(const float* A, const float* B, float* 
 }
 
 // 2. Pybind11 包装函数
-void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int64_t N) {
+void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int64_t N, int block_size) {
     // 安全检查
     TORCH_CHECK(A.is_cuda(), "A must be CUDA tensor");
     TORCH_CHECK(A.is_contiguous(), "A must be contiguous");
