@@ -37,17 +37,17 @@ class LabLogger:
             # Tuning 模式：分组柱状图优化 
             providers = sorted(list(set([k[0] for k in relevant_keys])))
             
-            # 1. 获取所有唯一的配置标签并排序 (比如 32, 128, 32_2...)
+            # 获取所有唯一的配置标签并排序 (比如 32, 128, 32_2...)
             all_configs = []
             for p in providers:
                 all_configs.extend(self.results[(p, mode)].keys())
             unique_configs = sorted(list(set(all_configs)))
             
-            # 2. 设置 X 轴位置和柱子宽度
+            # 设置 X 轴位置和柱子宽度
             x = np.arange(len(unique_configs))
             width = 0.8 / len(providers)  # 总宽度 0.8，按选手平分
             
-            # 3. 为每个选手画柱子，并应用偏移量
+            # 为每个选手画柱子，并应用偏移量
             for i, name in enumerate(providers):
                 data = self.results[(name, mode)]
                 # 如果某个选手没有某个配置，吞吐量记为 0
@@ -74,4 +74,4 @@ class LabLogger:
         path = f"operators/{op_name}/{mode}_analysis.png"
         plt.savefig(path)
         plt.close()
-        print(f"📊 {mode.capitalize()} 图表已生成: {path}")
+        print(f"{mode.capitalize()} 图表已生成: {path}")

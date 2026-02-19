@@ -3,14 +3,14 @@ import glob
 import argparse
 import multiprocessing  
 from concurrent.futures import ProcessPoolExecutor
-from core.engine import KernelEngine
+from utils.complier import KernelEngine
 
 def compile_job(cu_file):
     try:
         KernelEngine.setup_cuda(cu_file)
-        return f"✅ {os.path.basename(cu_file)} 编译完成/已是最新"
+        return f"{os.path.basename(cu_file)} 编译完成/已是最新"
     except Exception as e:
-        return f"❌ {os.path.basename(cu_file)} 失败: {e}"
+        return f"{os.path.basename(cu_file)} 失败: {e}"
 
 def main():
     # --- 2. 关键修复：必须在 main 的最开头设置 ---
@@ -26,10 +26,10 @@ def main():
     cu_files = glob.glob(path_pattern)
     
     if not cu_files:
-        print("🔍 未发现待编译的 CUDA 文件。")
+        print("未发现待编译的 CUDA 文件。")
         return
 
-    print(f"🚀 发现 {len(cu_files)} 个内核，开始并行构建 (Orin NX 8-Core Spawn Mode)...")
+    print(f"发现 {len(cu_files)} 个内核，开始并行构建 (Orin NX 8-Core Spawn Mode)...")
 
     # 3. 建议 max_workers 设为 4，避免内存和调度打架
     with ProcessPoolExecutor(max_workers=2) as executor:

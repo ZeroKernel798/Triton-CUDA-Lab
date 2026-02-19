@@ -4,8 +4,8 @@ import os
 import argparse
 import importlib.util
 import sys
-from core.engine import KernelEngine
-from core.plot import LabLogger
+from utils.complier import KernelEngine
+from utils.logger import LabLogger
 
 def run_lab():
     # 参数配置
@@ -20,7 +20,7 @@ def run_lab():
     # 动态加载测试内容 即每个算子文件夹内的test_cfg.py
     cfg_path = os.path.join(os.getcwd(), 'operators', args.op, 'test_cfg.py')
     if not os.path.exists(cfg_path):
-        print(f"❌ 找不到测试文件: {cfg_path}"); return
+        print(f"找不到测试文件: {cfg_path}"); return
 
     spec_lib = importlib.util.spec_from_file_location("spec", cfg_path)
     test_cfg = importlib.util.module_from_spec(spec_lib)
@@ -34,14 +34,13 @@ def run_lab():
 
     # 执行测试过程的函数
     def run_benchmark(solve_fn, name, is_cuda):
-        print(f"🚀 Testing {name} | Mode: {args.bench_mode}...")
-        import inspect
+        print(f"Testing {name} | Mode: {args.bench_mode}...")
 
         atol = getattr(spec, "atol", 1e-5)
         rtol = getattr(spec, "rtol", 1e-5)
         output_name = getattr(spec, "output_name", "C")
             
-        # 定义智能分发逻辑 (核心修正点)
+        # 定义智能分发逻辑 
         def dispatch_call(fn, p_case, is_cuda_target):
             if is_cuda_target:
                 # 获取 C++ 需要的参数顺序
@@ -63,22 +62,22 @@ def run_lab():
                 return fn(**filtered_case)
             
 
-        # 2. 最小闭环逻辑验证
+        # 最小闭环逻辑验证
         if hasattr(spec, "generate_example_test"):
             test_case = spec.generate_example_test()
             
             # 使用智能分发调用待测版本
             dispatch_call(solve_fn, test_case, is_cuda)
             
-            # 运行参考实现 (reference_impl 也要过滤，虽然你加了 **kwargs，但过滤更稳)
+            # 运行参考实现 
             ref_case = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in test_case.items()}
             dispatch_call(spec.reference_impl, ref_case, False)
             
             if not torch.allclose(test_case[output_name], ref_case[output_name], atol=atol, rtol=rtol):
-                print(f"      ❌ {name} 精度检查失败！")
+                print(f"{name} 精度检查失败！")
                 return
 
-        # 特殊输入测试 (Functional Test) 
+        # 特殊输入测试 
         if hasattr(spec, "generate_functional_test"):
             for i, test_case in enumerate(spec.generate_functional_test()):
                 dispatch_call(solve_fn, test_case, is_cuda)
@@ -86,7 +85,7 @@ def run_lab():
                 dispatch_call(spec.reference_impl, ref_case, False)
                 
                 if not torch.allclose(test_case[output_name], ref_case[output_name], atol=atol, rtol=rtol):
-                    print(f"      ❌ Functional Test #{i} FAILED!")
+                    print(f"Functional Test #{i} FAILED!")
                     return
 
         # 辅助性能测量逻辑
@@ -116,17 +115,19 @@ def run_lab():
                 print(f"Size {n:10d} | {avg_ms:8.4f} ms | {throughput:8.2f} GB/s")
 
         elif args.bench_mode == 'tuning':
-            # 后续通过参数给定最大值
-            fixed_n = 1024 * 1024 * 16 
-            base_case = spec.generate_performance_test(fixed_n)
+            # 这里设置一下想要测试的数据规模 然后用不同的核函数配置去测试 不设置就是test_cfg.py默认的
+            # fixed_n = 1024 * 1024 * 16 
+            # base_case = spec.generate_performance_test(fixed_n)
+            base_case = spec.generate_performance_test()
             configs = spec.cuda_tuning_configs if is_cuda else spec.tuning_configs
             for config in configs:
                 tuning_case = {**base_case, **config}
                 avg_ms = measure_latency(tuning_case)
-                throughput = spec.get_throughput(fixed_n, avg_ms)
+                # throughput = spec.get_throughput(n=fixed_n, ms=avg_ms)
+                throughput = spec.get_throughput(ms=avg_ms)
                 label = "_".join([f"{v}" for v in config.values()])
                 logger.record(name, 'tuning', label, throughput)
-                print(f"Config {label:15s} | {throughput:8.2f} ms | {throughput:8.2f} GB/s")
+                print(f"Config {label:15s} | {avg_ms:8.2f} ms | {throughput:8.2f} GB/s")
 
     # cuda的处理逻辑
     if args.mode in ['all', 'cuda']:

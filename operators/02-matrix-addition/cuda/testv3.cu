@@ -1,7 +1,6 @@
 #include <cuda_runtime.h>
 #include <torch/extension.h>
 
-// 1. CUDA Kernel 保持不变，使用线性索引处理 float4
 __global__ void matrix_add_vec_kernel(const float* A, const float* B, float* C, int Ne) {
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
     int offset = tid * 4;
@@ -32,8 +31,7 @@ __global__ void matrix_add_vec_kernel(const float* A, const float* B, float* C, 
     }
 }
 
-// 2. Pybind11 接口函数，接收 torch::Tensor
-void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N) {
+void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int block_size) {
     // 自动解包为扁平化后的总元素数量 Ne = N * N
     int Ne = N * N;
     
@@ -43,7 +41,7 @@ void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N) {
     float* d_C = C.data_ptr<float>();
 
     // 计算执行配置
-    int threadsPerBlock = 256;
+    int threadsPerBlock = block_size;
     int n_vec = (Ne + 3) / 4; // 计算需要多少个 float4 向量
     int blocksPerGrid = (n_vec + threadsPerBlock - 1) / threadsPerBlock;
 
@@ -51,7 +49,6 @@ void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N) {
     matrix_add_vec_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, Ne);
 }
 
-// 3. 定义 Pybind11 模块
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("solve", &solve, "Flattened Matrix Addition with float4 vectorization");
 }

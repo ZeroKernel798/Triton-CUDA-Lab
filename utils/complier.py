@@ -29,7 +29,7 @@ class KernelEngine:
         build_dir = os.path.join(os.getcwd(), "build", op_name, file_base)
         os.makedirs(build_dir, exist_ok=True)
         
-        # 把具体的 build_dir 加进路径
+        # 把具体的 build_dir 加进路径 方便导入模块
         if build_dir not in sys.path:
             sys.path.append(build_dir)
 
@@ -40,6 +40,7 @@ class KernelEngine:
         if os.path.exists(md5_file):
             with open(md5_file, 'r') as f:
                 if f.read() == cu_md5:
+                    # 文件没有修改 则直接加载已经编译好的模块
                     try:
                         if module_name in sys.modules:
                             return sys.modules[module_name]
@@ -47,7 +48,7 @@ class KernelEngine:
                     except Exception:
                         pass
 
-        # 编译流程
+        # 文件修改过 则进行正常编译
         os.environ["MAX_JOBS"] = str(os.cpu_count())
         print(f"[Compiler] Target: {module_name} | Dir: {op_name}")
         

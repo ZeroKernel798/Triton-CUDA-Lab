@@ -37,8 +37,7 @@ __global__ void matrix_add_kernel_vec(const float* A, const float* B, float* C, 
     }
 }
 
-// 2. Pybind11 接口函数
-void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N) {
+void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int block_size) {
     const float* d_A = A.data_ptr<float>();
     const float* d_B = B.data_ptr<float>();
     float* d_C = C.data_ptr<float>();
@@ -46,13 +45,13 @@ void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N) {
     // 一个线程负责 4 个 float
     int n_vec = (N + 3) / 4; 
     
-    dim3 threadsPerBlock(16, 16);
-    dim3 blocksPerGrid((n_vec + 15) / 16, (N + 15) / 16);
+    int block_size_1d = std::sqrt(block_size);
+    dim3 threadsPerBlock(block_size_1d, block_size_1d);
+    dim3 blocksPerGrid((n_vec + block_size_1d - 1) / block_size_1d, (N + block_size_1d - 1) / block_size_1d);
 
     matrix_add_kernel_vec<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, N);
 }
 
-// 3. 模块定义
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("solve", &solve, "Matrix Addition with float4 vectorization");
 }
