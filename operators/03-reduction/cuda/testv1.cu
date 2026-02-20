@@ -46,11 +46,11 @@ __global__ void reduction_kernel_v2(const float* input, float* output, int N){
 }
 
 // Pybind11 接口函数
-void solve(torch::Tensor input, torch::Tensor output, int N) {
+void solve(torch::Tensor input, torch::Tensor output, int N, int block_size) {
     // 预热：在运行前将 output 清零（框架如果没处理，这里必须处理）
     cudaMemset(output.data_ptr<float>(), 0, sizeof(float));
 
-    const int threadsPerBlock = 512; 
+    const int threadsPerBlock = block_size; 
     
     // 获取 SM 数量进行动态负载平衡
     int sm_count = 0;
@@ -59,11 +59,15 @@ void solve(torch::Tensor input, torch::Tensor output, int N) {
     // 经典的 Grid Size 调优逻辑
     const int blocksPerGrid = std::min((N + threadsPerBlock - 1) / threadsPerBlock, sm_count * 8);
 
-    reduction_kernel_v2<threadsPerBlock><<<blocksPerGrid, threadsPerBlock>>>(
-        input.data_ptr<float>(), 
-        output.data_ptr<float>(), 
-        N
-    );
+    switch (block_size) {
+        case 1024: reduction_kernel_v2<1024><<<blocksPerGrid, 1024>>>(input.data_ptr<float>(), output.data_ptr<float>(), N); break;
+        case 512:  reduction_kernel_v2<512><<<blocksPerGrid, 512>>>(input.data_ptr<float>(), output.data_ptr<float>(), N); break;
+        case 256:  reduction_kernel_v2<256><<<blocksPerGrid, 256>>>(input.data_ptr<float>(), output.data_ptr<float>(), N); break;
+        case 128:  reduction_kernel_v2<128><<<blocksPerGrid, 128>>>(input.data_ptr<float>(), output.data_ptr<float>(), N); break;
+        default:
+            // 兜底逻辑：如果不是预设的 block_size，报错或使用通用实现
+            AT_ERROR("Unsupported block_size: ", block_size);
+    }
 }
 
 // 模块定义

@@ -10,6 +10,7 @@ class OperatorSpec:
         self.rtol = 1e-05
         self.arg_names = ["A", "B", "C", "N", "block_size"]
         # 数据规模测试
+        self.perf_input = 1024 * 1024 * 16
         self.x_vals = [2**i for i in range(12, 25)]
         # 核函数参数调优
         # 针对triton
@@ -28,8 +29,10 @@ class OperatorSpec:
             {"block_size": 1024}, # 最大值
         ]
 
-    def get_throughput(self, n, ms):
+    def get_throughput(self, n = None, ms = None):
         # 向量加法吞吐量计算
+        if n is None:
+            n = self.perf_input
         return (n * 4 * 3) / 1e9 / (ms / 1000)
 
     # pytorch标准
@@ -113,7 +116,9 @@ class OperatorSpec:
 
         return test_cases
 
-    def generate_performance_test(self, N=1024*1024) -> Dict[str, Any]:
+    def generate_performance_test(self, N=None) -> Dict[str, Any]:
+        if N is None:
+            N = self.perf_input
         dtype = torch.float32
         return {
             "A": torch.empty(N, device="cuda", dtype=dtype).uniform_(-1.0, 1.0),

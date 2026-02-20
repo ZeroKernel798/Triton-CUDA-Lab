@@ -3,7 +3,7 @@ import glob
 import argparse
 import multiprocessing  
 from concurrent.futures import ProcessPoolExecutor
-from utils.complier import KernelEngine
+from utils.compiler import KernelEngine
 
 def compile_job(cu_file):
     try:

@@ -164,8 +164,10 @@ class OperatorSpec:
 
         return test_cases
 
-    def generate_performance_test(self, N = 4096) -> Dict[str, Any]:
-        # 4096 * 4096 = 16M elements
+    def generate_performance_test(self, N = None) -> Dict[str, Any]:
+        # 如果没设置N 则使用perf_input
+        if N is None:
+            N = self.perf_input
         dtype = torch.float32
         return {
             "A": torch.empty(N, N, device="cuda", dtype=dtype).uniform_(-1000.0, 1000.0),

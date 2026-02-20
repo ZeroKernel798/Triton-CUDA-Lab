@@ -4,7 +4,7 @@ import os
 import argparse
 import importlib.util
 import sys
-from utils.complier import KernelEngine
+from utils.compiler import KernelEngine
 from utils.logger import LabLogger
 
 def run_lab():
@@ -107,17 +107,38 @@ def run_lab():
         if not hasattr(spec, "generate_performance_test"): return
 
         if args.bench_mode == 'scaling':
+            # 针对数据规模 自动选择出最优的核函数配置
+            configs = spec.cuda_tuning_configs if is_cuda else spec.tuning_configs
+            
             for n in spec.x_vals:
-                perf_case = spec.generate_performance_test(n)
-                avg_ms = measure_latency(perf_case)
-                throughput = spec.get_throughput(n, avg_ms)
-                logger.record(name, 'scaling', n, throughput)
-                print(f"Size {n:10d} | {avg_ms:8.4f} ms | {throughput:8.2f} GB/s")
+                best_throughput = 0.0
+                best_ms = 0.0
+                best_cfg_label = ""
+
+                # 在该规模下遍历所有可能的配置
+                for config in configs:
+                    # 将规模参数 n 与 调优配置 config 结合
+                    perf_case = {**spec.generate_performance_test(n), **config}
+                    
+                    # 测量当前配置下的性能
+                    avg_ms = measure_latency(perf_case)
+                    throughput = spec.get_throughput(n, avg_ms)
+                    
+                    # 择优录取：只保留表现最好的那个
+                    if throughput > best_throughput:
+                        best_throughput = throughput
+                        best_ms = avg_ms
+                        best_cfg_label = "_".join([f"{v}" for v in config.values()])
+
+                # 最终记录该规模下的“最佳战力”
+                logger.record(name, 'scaling', n, best_throughput)
+                print(f"Size {n:10d} | Best CFG: {best_cfg_label:10s} | {best_ms:8.4f} ms | {best_throughput:8.2f} GB/s")
 
         elif args.bench_mode == 'tuning':
             # 这里设置一下想要测试的数据规模 然后用不同的核函数配置去测试 不设置就是test_cfg.py默认的
             # fixed_n = 1024 * 1024 * 16 
             # base_case = spec.generate_performance_test(fixed_n)
+            # 这里默认使用test_cfg.py中默认的规模
             base_case = spec.generate_performance_test()
             configs = spec.cuda_tuning_configs if is_cuda else spec.tuning_configs
             for config in configs:
