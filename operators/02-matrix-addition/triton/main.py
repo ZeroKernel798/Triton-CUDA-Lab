@@ -8,15 +8,13 @@ def kernel(a_ptr, b_ptr, c_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
     block_start = bid * BLOCK_SIZE
     offsets = block_start + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
-    a_data = tl.load(a_ptr + offsets, mask=mask) # shape (BLOCK_SIZE)
-    b_data = tl.load(b_ptr + offsets, mask=mask) # shape (BLOCK_SIZE)
+    a_data = tl.load(a_ptr + offsets, mask=mask) 
+    b_data = tl.load(b_ptr + offsets, mask=mask) 
     c_data = a_data + b_data
     tl.store(c_ptr + offsets, c_data, mask=mask)
 
 # 增加 **kwargs 来接收来自框架的 BLOCK_SIZE, num_warps 等
 def solve(A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, N: int, **kwargs):
-    # 优先级：1. kwargs 里的值 2. 默认值
-    # 注意：这里的 KEY 要和你 tuning_configs 里的名字完全一致（大小写敏感）
     BLOCK_SIZE = kwargs.get("BLOCK_SIZE", 1024)
     num_warps = kwargs.get("num_warps", 4)
     

@@ -7,10 +7,17 @@ class OperatorSpec:
         self.output_name = "C"  
         self.atol = 1e-05
         self.rtol = 1e-05
-        self.arg_names = ["A", "B", "C", "N", "block_size"]
         # 数据规模测试
         self.x_vals = [2**i for i in range(8, 14)] # 256 到 8192
         self.perf_input = 4096
+        # 默认配置 给简单测试使用
+        self.base_cfg = {
+            "block_size": 256,    # 1D 用的
+            "bx": 16,             # 2D 用的 x
+            "by": 16,             # 2D 用的 y
+            "BLOCK_SIZE": 1024,   # Triton 用的
+            "num_warps": 4        # Triton 用的
+        }
         # 核函数参数调优
         # 针对triton
         self.tuning_configs = [
@@ -21,9 +28,13 @@ class OperatorSpec:
         ]
         # 针对cuda 
         self.cuda_tuning_configs = [
-            {"block_size": 64},   # 最小 warp
-            {"block_size": 256},  # 默认值
-            {"block_size": 1024}, # 最大值
+            {"block_size": 64},   
+            {"block_size": 256},  
+            {"block_size": 1024}, 
+            {"bx": 32, "by": 8},  
+            {"bx": 32, "by": 8},  
+            {"bx": 16, "by": 16},  
+            {"bx": 8, "by": 32},
         ]
     
     def get_throughput(self, n=None, ms=None):
@@ -41,9 +52,6 @@ class OperatorSpec:
 
         torch.add(A, B, out=C)
 
-    def get_solve_signature(self) -> List[str]:
-        return self.arg_names
-
     def generate_example_test(self) -> Dict[str, Any]:
         dtype = torch.float32
         N = 2
@@ -55,11 +63,10 @@ class OperatorSpec:
             "B": B,
             "C": C,
             "N": N,
-            "block_size": 256, 
+            **self.base_cfg 
         }
 
     def generate_functional_test(self) -> List[Dict[str, Any]]:
-        # 保留所有原有的功能测试用例和数值
         dtype = torch.float32
         test_cases = []
 
@@ -69,7 +76,7 @@ class OperatorSpec:
             "B": torch.tensor([[5.0, 6.0], [7.0, 8.0]], device="cuda", dtype=dtype),
             "C": torch.zeros((2, 2), device="cuda", dtype=dtype),
             "N": 2,
-            "block_size": 256, 
+            **self.base_cfg
         })
 
         # all_zeros_4x4
@@ -78,7 +85,7 @@ class OperatorSpec:
             "B": torch.zeros((4, 4), device="cuda", dtype=dtype),
             "C": torch.zeros((4, 4), device="cuda", dtype=dtype),
             "N": 4,
-            "block_size": 256, 
+            **self.base_cfg 
         })
 
         # identity_plus_identity_3x3
@@ -87,7 +94,7 @@ class OperatorSpec:
             "B": torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], device="cuda", dtype=dtype),
             "C": torch.zeros((3, 3), device="cuda", dtype=dtype),
             "N": 3,
-            "block_size": 256, 
+            **self.base_cfg 
         })
 
         # negative_values_2x2
@@ -96,7 +103,7 @@ class OperatorSpec:
             "B": torch.tensor([[-5.0, -6.0], [-7.0, -8.0]], device="cuda", dtype=dtype),
             "C": torch.zeros((2, 2), device="cuda", dtype=dtype),
             "N": 2,
-            "block_size": 256, 
+            **self.base_cfg 
         })
 
         # mixed_positive_negative_2x2
@@ -105,7 +112,7 @@ class OperatorSpec:
             "B": torch.tensor([[-1.0, 2.0], [3.0, -4.0]], device="cuda", dtype=dtype),
             "C": torch.zeros((2, 2), device="cuda", dtype=dtype),
             "N": 2,
-            "block_size": 256, 
+            **self.base_cfg 
         })
 
         # single_element_1x1
@@ -114,7 +121,7 @@ class OperatorSpec:
             "B": torch.tensor([[8.0]], device="cuda", dtype=dtype),
             "C": torch.zeros((1, 1), device="cuda", dtype=dtype),
             "N": 1,
-            "block_size": 256, 
+            **self.base_cfg 
         })
 
         # large_N_16x16
@@ -123,7 +130,7 @@ class OperatorSpec:
             "B": torch.empty((16, 16), device="cuda", dtype=dtype).uniform_(-10.0, 10.0),
             "C": torch.zeros((16, 16), device="cuda", dtype=dtype),
             "N": 16,
-            "block_size": 256, 
+            **self.base_cfg 
         })
 
         # very_small_numbers
@@ -132,7 +139,7 @@ class OperatorSpec:
             "B": torch.tensor([[0.000001, 0.0000001], [0.00000001, 0.000000001]], device="cuda", dtype=dtype),
             "C": torch.zeros((2, 2), device="cuda", dtype=dtype),
             "N": 2,
-            "block_size": 256, 
+            **self.base_cfg 
         })
 
         # large_numbers
@@ -141,7 +148,7 @@ class OperatorSpec:
             "B": torch.tensor([[1000000.0, -10000000.0], [-1000000.0, 10000000.0]], device="cuda", dtype=dtype),
             "C": torch.zeros((2, 2), device="cuda", dtype=dtype),
             "N": 2,
-            "block_size": 256, 
+            **self.base_cfg 
         })
 
         # non_power_of_two_size_7x7
@@ -150,7 +157,7 @@ class OperatorSpec:
             "B": torch.empty((7, 7), device="cuda", dtype=dtype).uniform_(-5.0, 5.0),
             "C": torch.zeros((7, 7), device="cuda", dtype=dtype),
             "N": 7,
-            "block_size": 256, 
+            **self.base_cfg 
         })
 
         # medium_size_32x32
@@ -159,7 +166,7 @@ class OperatorSpec:
             "B": torch.empty((32, 32), device="cuda", dtype=dtype).uniform_(-100.0, 100.0),
             "C": torch.zeros((32, 32), device="cuda", dtype=dtype),
             "N": 32,
-            "block_size": 256, 
+            **self.base_cfg  
         })
 
         return test_cases
@@ -174,7 +181,5 @@ class OperatorSpec:
             "B": torch.empty(N, N, device="cuda", dtype=dtype).uniform_(-1000.0, 1000.0),
             "C": torch.zeros(N, N, device="cuda", dtype=dtype),
             "N": N,
-            "block_size": 256, # 默认值，会被 tuning 模式覆盖
-            "BLOCK_SIZE": 256, # Triton 默认值
-            "num_warps": 4     # Triton 默认值
+            **self.base_cfg  
         }

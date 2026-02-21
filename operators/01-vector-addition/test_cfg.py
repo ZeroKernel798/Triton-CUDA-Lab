@@ -4,14 +4,20 @@ from typing import Any, Dict, List
 
 class OperatorSpec:
     def __init__(self):
+        # 设置算子和输出名字
         self.name = "Vector Addition"
         self.output_name = "C"
+        # 设置精度要求
         self.atol = 1e-05
         self.rtol = 1e-05
-        self.arg_names = ["A", "B", "C", "N", "block_size"]
         # 数据规模测试
         self.perf_input = 1024 * 1024 * 16
         self.x_vals = [2**i for i in range(12, 25)]
+        self.base_cfg = {
+            "block_size": 256,    # 1D 用的
+            "BLOCK_SIZE": 1024,   # Triton 用的
+            "num_warps": 4        # Triton 用的
+        }
         # 核函数参数调优
         # 针对triton
         self.tuning_configs = [
@@ -22,11 +28,11 @@ class OperatorSpec:
         ]
         # 针对cuda
         self.cuda_tuning_configs = [
-            {"block_size": 32},   # 最小 warp
+            {"block_size": 32},   
             {"block_size": 128},
-            {"block_size": 256},  # 默认值
+            {"block_size": 256},  
             {"block_size": 512},
-            {"block_size": 1024}, # 最大值
+            {"block_size": 1024}, 
         ]
 
     def get_throughput(self, n = None, ms = None):
@@ -43,10 +49,6 @@ class OperatorSpec:
 
         torch.add(A, B, out=C)
 
-     # 只需要返回参数名称的顺序，Pybind11 会根据位置匹配
-    def get_solve_signature(self) -> List[str]:
-        return self.arg_names
-
     # 生成最简单的测试案例 最小闭环逻辑验证
     def generate_example_test(self) -> Dict[str, Any]:
         dtype = torch.float32
@@ -59,7 +61,7 @@ class OperatorSpec:
             "B": B,
             "C": C,
             "N": N,
-            "block_size": 256, 
+            **self.base_cfg 
         }
 
     def generate_functional_test(self) -> List[Dict[str, Any]]:
@@ -94,7 +96,7 @@ class OperatorSpec:
                     "B": torch.tensor(b_vals, device="cuda", dtype=dtype),
                     "C": torch.zeros(n, device="cuda", dtype=dtype),
                     "N": n,
-                    "block_size": 256, 
+                    **self.base_cfg 
                 }
             )
 
@@ -110,7 +112,7 @@ class OperatorSpec:
                     "B": torch.empty(size, device="cuda", dtype=dtype).uniform_(*b_range),
                     "C": torch.zeros(size, device="cuda", dtype=dtype),
                     "N": size,
-                    "block_size": 256, 
+                    **self.base_cfg  
                 }
             )
 
@@ -127,5 +129,5 @@ class OperatorSpec:
             "N": N,
             "block_size": 256, # 默认值，会被 tuning 模式覆盖
             "BLOCK_SIZE": 256, # Triton 默认值
-            "num_warps": 4     # Triton 默认值
+            **self.base_cfg 
         }

@@ -50,5 +50,8 @@ void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int block_s
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("solve", &solve, "Flattened Matrix Addition with float4 vectorization");
+    namespace py = pybind11;
+    m.def("solve", &solve, "1D Flattened Matrix Addition",
+          py::arg("A"), py::arg("B"), py::arg("C"), py::arg("N"), 
+          py::arg("block_size")); // 显式命名
 }

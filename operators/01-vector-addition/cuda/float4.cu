@@ -31,13 +31,8 @@ __global__ void vector_add_float4_kernel(const float* A, const float* B, float* 
 }
 
 void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int64_t N, int block_size) {
-    // 安全检查
-    TORCH_CHECK(A.is_cuda(), "A must be CUDA tensor");
-    TORCH_CHECK(A.is_contiguous(), "A must be contiguous");
-    TORCH_CHECK(A.dtype() == torch::kFloat32, "A must be Float32");
-
     int threadsPerBlock = block_size; 
-    // 注意：因为每个线程处理 4 个元素，所以计算 Grid 时要除以 4
+    // 因为每个线程处理 4 个元素，所以计算 Grid 时要除以 4
     int n_vector = (N + 3) / 4; 
     int blocksPerGrid = (n_vector + threadsPerBlock - 1) / threadsPerBlock;
 
@@ -50,5 +45,8 @@ void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int64_t N, int blo
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("solve", &solve, "Vector Addition with float4 optimization (Pybind11)");
+    namespace py = pybind11;
+    m.def("solve", &solve, "Vector Addition Kernel (Pybind11)",
+          py::arg("A"), py::arg("B"), py::arg("C"), py::arg("N"), 
+          py::arg("block_size")); // 显式命名
 }

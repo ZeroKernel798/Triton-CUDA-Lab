@@ -1,7 +1,6 @@
 #include <cuda_runtime.h>
 #include <torch/extension.h>
 
-// 1. 内核保持不变，负责 X 方向的向量化处理
 __global__ void matrix_add_kernel_vec(const float* A, const float* B, float* C, int N) 
 {
     // x_base 是 float4 的索引
@@ -37,7 +36,7 @@ __global__ void matrix_add_kernel_vec(const float* A, const float* B, float* C, 
     }
 }
 
-void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int block_size) {
+void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int bx, int by) {
     const float* d_A = A.data_ptr<float>();
     const float* d_B = B.data_ptr<float>();
     float* d_C = C.data_ptr<float>();
@@ -45,13 +44,15 @@ void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int block_s
     // 一个线程负责 4 个 float
     int n_vec = (N + 3) / 4; 
     
-    int block_size_1d = std::sqrt(block_size);
-    dim3 threadsPerBlock(block_size_1d, block_size_1d);
-    dim3 blocksPerGrid((n_vec + block_size_1d - 1) / block_size_1d, (N + block_size_1d - 1) / block_size_1d);
+    dim3 threadsPerBlock(bx, by);
+    dim3 blocksPerGrid((n_vec + bx - 1) / bx, (N + by - 1) / by);
 
     matrix_add_kernel_vec<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, N);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("solve", &solve, "Matrix Addition with float4 vectorization");
+    namespace py = pybind11;
+    m.def("solve", &solve, "2D Matrix Addition",
+          py::arg("A"), py::arg("B"), py::arg("C"), py::arg("N"), 
+          py::arg("bx"), py::arg("by")); // 显式命名
 }
