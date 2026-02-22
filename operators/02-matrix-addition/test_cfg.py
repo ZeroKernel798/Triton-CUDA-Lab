@@ -11,7 +11,7 @@ class OperatorSpec:
         self.rtol = 1e-05
         # 数据规模测试
         self.x_vals = [{"N": 2**i} for i in range(8, 14)]
-        self.perf_input = 4096
+        self.perf_input = 8192
         # 默认配置 给简单测试使用
         self.base_cfg = {
             "block_size": 256,    # 1D 用的
