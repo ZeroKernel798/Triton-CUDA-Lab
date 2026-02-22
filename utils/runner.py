@@ -87,33 +87,60 @@ class BenchmarkRunner:
             
             if self.args.bench_mode == 'scaling':
                 print(f"\n📈 Scaling Analysis:")
-                print(f"{'Size':>12} | {'Best CFG':>12} | {'Latency':>10} | {'Throughput':>12}")
-                print("-" * 55)
-                for n in self.spec.x_vals:
+                print(f"{'Shape':>20} | {'Best CFG':>12} | {'Latency':>10} | {'Throughput':>12}")
+                print("-" * 65)
+                
+                # 这里的 size_cfg，代表它是一个字典，例如 {"rows": 1024, "cols": 1024}
+                for size_cfg in self.spec.x_vals:
                     best_tp, best_ms, best_label = 0.0, 0.0, ""
+                    
+                    # 生成展示用的标签，比如 "1024x1024"
+                    shape_label = "x".join([str(v) for v in size_cfg.values()])
+                    
                     for config in configs:
                         if not has_kwargs and not any(k in params for k in config.keys()): continue 
-                        p_case = {**self.spec.generate_performance_test(n), **config}
+                        
+                        # 直接传递字典进去
+                        # 这样 generate_performance_test 就能接收到 rows=1024, cols=1024
+                        p_case = {**self.spec.generate_performance_test(size_cfg), **config}
+                        
                         ms = self.measure_latency(solve_fn, p_case, is_cuda, params, has_kwargs)
-                        tp = self.spec.get_throughput(n, ms)
+                        
+                        # get_throughput 现在接收整个 p_case 字典
+                        # 算子内部会根据字典里的维度信息计算流量
+                        tp = self.spec.get_throughput(p_case, ms)
+                        
                         if tp > best_tp:
                             best_tp, best_ms, best_label = tp, ms, "_".join([f"{v}" for v in config.values()])
+                    
                     if best_label:
-                        self.logger.record(name, 'scaling', n, best_tp)
-                        print(f"{n:12d} | {best_label:>12s} | {best_ms:8.4f} ms | {best_tp:9.2f} GB/s")
+                        # 记录日志时，使用 shape_label (字符串) 替代之前的数字 n
+                        self.logger.record(name, 'scaling', shape_label, best_tp)
+                        print(f"{shape_label:>20s} | {best_label:>12s} | {best_ms:8.4f} ms | {best_tp:9.2f} GB/s")
 
             elif self.args.bench_mode == 'tuning':
-                base_case = self.spec.generate_performance_test()
-                # 兼容 N 可能不存在的情况
-                n_val = base_case.get('N', 'Fixed')
-                print(f"\n🔍 Tuning Analysis (Size: {n_val}):")
+                # 传空字典获取基础用例
+                base_case = self.spec.generate_performance_test({})
+                
+                # 通用描述：把字典里所有是数字的值拼起来作为 Shape 描述
+                # 这样不管是 {"N": 1024} 还是 {"rows": 100, "cols": 200} 都能自动生成描述
+                # 过滤掉 Tensor，只取 int/float
+                shape_desc = "x".join([str(v) for k, v in base_case.items() if isinstance(v, (int, float))])
+
+                print(f"\n🔍 Tuning Analysis (Size: {shape_desc}):")
                 print(f"{'Config':>15} | {'Latency':>10} | {'Throughput':>12}")
                 print("-" * 45)
+
                 for config in configs:
+                    # 合并配置
                     tuning_case = {**base_case, **config}
-                    # 修复点：这里应该传 params，而不是 kernel_params
+                    
+                    # 运行测量
                     ms = self.measure_latency(solve_fn, tuning_case, is_cuda, params, has_kwargs)
-                    tp = self.spec.get_throughput(n_val if isinstance(n_val, int) else None, ms)
+                    
+                    # 统一传字典算吞吐
+                    tp = self.spec.get_throughput(tuning_case, ms)
+                    
                     label = "_".join([f"{v}" for v in config.values()])
                     self.logger.record(name, 'tuning', label, tp)
                     print(f"{label:>15s} | {ms:8.4f} ms | {tp:9.2f} GB/s")

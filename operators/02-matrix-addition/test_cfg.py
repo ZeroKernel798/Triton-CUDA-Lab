@@ -3,12 +3,14 @@ from typing import Any, Dict, List
 
 class OperatorSpec:
     def __init__(self):
+        # 设置算子名字以及输出名字
         self.name = "Matrix Addition"
         self.output_name = "C"  
+        # 设置精度标准
         self.atol = 1e-05
         self.rtol = 1e-05
         # 数据规模测试
-        self.x_vals = [2**i for i in range(8, 14)] # 256 到 8192
+        self.x_vals = [{"N": 2**i} for i in range(8, 14)]
         self.perf_input = 4096
         # 默认配置 给简单测试使用
         self.base_cfg = {
@@ -37,9 +39,9 @@ class OperatorSpec:
             {"bx": 8, "by": 32},
         ]
     
-    def get_throughput(self, n=None, ms=None):
-        if n is None:
-            n = self.perf_input
+    def get_throughput(self, case: Dict[str, Any], ms = None):
+        if ms is None or ms == 0: return 0
+        n = case.get("N", self.perf_input)
         total_elements = n * n
         return (total_elements * 4 * 3) / 1e9 / (ms / 1000)
 
@@ -171,11 +173,10 @@ class OperatorSpec:
 
         return test_cases
 
-    def generate_performance_test(self, N = None) -> Dict[str, Any]:
+    def generate_performance_test(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
         # 如果没设置N 则使用perf_input
-        if N is None:
-            N = self.perf_input
         dtype = torch.float32
+        N = cfg.get("N", self.perf_input)
         return {
             "A": torch.empty(N, N, device="cuda", dtype=dtype).uniform_(-1000.0, 1000.0),
             "B": torch.empty(N, N, device="cuda", dtype=dtype).uniform_(-1000.0, 1000.0),

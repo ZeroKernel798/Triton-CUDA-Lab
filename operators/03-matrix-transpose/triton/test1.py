@@ -38,10 +38,10 @@ def matrix_transpose_kernel(
     tl.store(out_ptrs, transposed_tile, mask=out_mask)
 
 
-def solve(input: torch.Tensor, output: torch.Tensor, rows: int, cols: int):
-    # 定义 Tile 大小
-    BLOCK_ROW = 32
-    BLOCK_COL = 32
+def solve(input: torch.Tensor, output: torch.Tensor, rows: int, cols: int, **kwargs):
+    BLOCK_ROW = kwargs.get("BLOCK_ROW", 32)
+    BLOCK_COL = kwargs.get("BLOCK_COL", 32)
+    num_warps = kwargs.get("num_warps", 4)
 
     # 计算 Grid
     grid = (triton.cdiv(rows, BLOCK_ROW), triton.cdiv(cols, BLOCK_COL))
@@ -52,5 +52,5 @@ def solve(input: torch.Tensor, output: torch.Tensor, rows: int, cols: int):
         input.stride(0), input.stride(1),
         output.stride(0), output.stride(1),
         BLOCK_ROW=BLOCK_ROW, BLOCK_COL=BLOCK_COL,
-        num_warps=4
+        num_warps=num_warps
     )

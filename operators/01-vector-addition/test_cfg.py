@@ -1,5 +1,4 @@
 import torch
-import ctypes
 from typing import Any, Dict, List
 
 class OperatorSpec:
@@ -12,7 +11,7 @@ class OperatorSpec:
         self.rtol = 1e-05
         # 数据规模测试
         self.perf_input = 1024 * 1024 * 16
-        self.x_vals = [2**i for i in range(12, 25)]
+        self.x_vals = [{"N": 2**i} for i in range(12, 25)]
         self.base_cfg = {
             "block_size": 256,    # 1D 用的
             "BLOCK_SIZE": 1024,   # Triton 用的
@@ -35,10 +34,10 @@ class OperatorSpec:
             {"block_size": 1024}, 
         ]
 
-    def get_throughput(self, n = None, ms = None):
+    def get_throughput(self, case: Dict[str, Any], ms = None):
         # 向量加法吞吐量计算
-        if n is None:
-            n = self.perf_input
+        if ms is None or ms == 0: return 0
+        n = case.get("N", self.perf_input)
         return (n * 4 * 3) / 1e9 / (ms / 1000)
 
     # pytorch标准
@@ -118,16 +117,13 @@ class OperatorSpec:
 
         return test_cases
 
-    def generate_performance_test(self, N=None) -> Dict[str, Any]:
-        if N is None:
-            N = self.perf_input
+    def generate_performance_test(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
         dtype = torch.float32
+        N = cfg.get("N", self.perf_input)
         return {
             "A": torch.empty(N, device="cuda", dtype=dtype).uniform_(-1.0, 1.0),
             "B": torch.empty(N, device="cuda", dtype=dtype).uniform_(-1.0, 1.0),
             "C": torch.zeros(N, device="cuda", dtype=dtype),
             "N": N,
-            "block_size": 256, # 默认值，会被 tuning 模式覆盖
-            "BLOCK_SIZE": 256, # Triton 默认值
             **self.base_cfg 
         }
