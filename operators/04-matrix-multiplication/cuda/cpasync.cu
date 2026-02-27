@@ -241,7 +241,7 @@ __global__ void matrix_mul_kernel_warp_tile_cp_async(const float* __restrict__ A
 }
 
 void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, 
-           int N, int M, int K, int bx, int by, int bk, std::string version) {
+           int N, int M, int K, int bx, int by, int bk) {
     auto d_A = A.data_ptr<float>(); 
     auto d_B = B.data_ptr<float>(); 
     auto d_C = C.data_ptr<float>();
@@ -266,6 +266,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("solve", &solve, "CP_ASYNC Hybrid GEMM",
           py::arg("A"), py::arg("B"), py::arg("C"), 
           py::arg("N"), py::arg("M"), py::arg("K"), 
-          py::arg("bx"), py::arg("by"), py::arg("bk"),
-          py::arg("version")); 
+          py::arg("bx"), py::arg("by"), py::arg("bk")); 
 }

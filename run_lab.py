@@ -42,7 +42,7 @@ def run_lab():
                 spec_t = importlib.util.spec_from_file_location("triton_mod", py_file)
                 triton_mod = importlib.util.module_from_spec(spec_t)
                 spec_t.loader.exec_module(triton_mod)
-                if hasattr(triton_mod, 'solve'): runner.run_benchmark(triton_mod.solve, f"Triton_{file_name}", False)
+                if hasattr(triton_mod, 'solve'): runner.run_benchmark(triton_mod.solve, f"{file_name}", False)
             except Exception as e: print(f"运行错误 [{file_name}]: {e}")
 
     logger.plot(args.op, args.bench_mode)

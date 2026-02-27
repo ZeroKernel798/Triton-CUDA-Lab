@@ -3,6 +3,13 @@ from typing import Any, Dict, List
 
 
 class OperatorSpec:
+    @staticmethod
+    def make_configs(params: List[Dict[str, Any]], versions: List[str]) -> List[Dict[str, Any]]:
+        """
+        组合参数池和版本名，生成带 version 标签的配置列表
+        """
+        return [{**p, "version": v} for v in versions for p in params]
+    
     def __init__(self):
         # 设置算子名字以及输出名字
         self.name = "Matrix multiplication"
@@ -25,62 +32,30 @@ class OperatorSpec:
             # 6. 大规模压力测试：查看 A100 的极限性能
             {"M": 8192, "K": 128, "N": 8192},
         ]
-        # 默认配置 给简单配置使用 仅仅验证正确性
-        self.base_cfg = [
-            {"bx": 32,  "by": 32,  "bk": 32, "version": "native"},
-            {"bx": 32,  "by": 32,  "bk": 32, "version": "smem_tile"},
-            
-            # 这里是重点！thread_tile 和 warp_tile 的起步 bk 设为 8
-            # 彻底解决 32x32x32 导致的精度崩溃问题
-            {"bx": 128, "by": 128, "bk": 8,  "version": "thread_tile"},
-            {"bx": 128, "by": 128, "bk": 8,  "version": "thread_tile_opt"},
-            {"bx": 128, "by": 128, "bk": 8,  "version": "warp_tile"},
-            {"bx": 128, "by": 128, "bk": 32,  "version": "tf32"},
-        ]
         # 核函数参数调优
         # 针对triton
-        self.tuning_configs = [
+        triton_tiles = [
             {"BLOCK_ROW": 32, "BLOCK_COL": 32, "num_warps": 2},
             {"BLOCK_ROW": 8, "BLOCK_COL": 8, "num_warps": 2},
             {"BLOCK_ROW": 16, "BLOCK_COL": 16, "num_warps": 2},
         ]
+        # 直接调用静态方法，生成针对 main 版本的调优列表
+        self.tuning_configs = self.make_configs(triton_tiles, ["test1"])
         # 针对cuda的配置
-        self.cuda_tuning_configs = [
-            # 1. 朴素版 (Baseline)：用于验证正确性，不考虑访存合并
-            {"bx": 32, "by": 8,  "bk": 32, "version": "native"},   
-            {"bx": 32, "by": 16, "bk": 32, "version": "native"}, 
-            {"bx": 32, "by": 32, "bk": 32, "version": "native"},
-            # 2. 分块内积版 (Tiled)：你之前的版本，解决了显存带宽问题
-            {"bx": 32, "by": 8, "bk": 32, "version": "smem_tile"},
-            {"bx": 32, "by": 16, "bk": 32, "version": "smem_tile"},
-            {"bx": 32, "by": 32, "bk": 32, "version": "smem_tile"},
-            # 3. 高性能外积版 (Outer)：解决 Smem 带宽问题
-            # 注意：bx/by 必须是 8 的倍数
-            {"bx": 128, "by": 128, "bk": 8, "version": "thread_tile"},
-            {"bx": 128, "by": 64,  "bk": 8, "version": "thread_tile"},
-            {"bx": 64, "by": 128, "bk": 8, "version": "thread_tile"},
-            # 外积优化版本 解决了银行冲突 使用了向量读取
-            {"bx": 128, "by": 128, "bk": 8, "version": "thread_tile_opt"},
-            {"bx": 128, "by": 64,  "bk": 8, "version": "thread_tile_opt"},
-            {"bx": 64, "by": 128, "bk": 8, "version": "thread_tile_opt"},
-            # 4. warp tile版本 更细致的划分
-            {"bx": 128, "by": 128, "bk": 8, "version": "warp_tile"},
-            {"bx": 128, "by": 64,  "bk": 8, "version": "warp_tile"},
-            {"bx": 64, "by": 128, "bk": 8, "version": "warp_tile"},
-            # 5. warp tile 双缓冲版本
-            {"bx": 128, "by": 128, "bk": 8,  "version": "warp_tile_double_buffer"},
-            {"bx": 128, "by": 64,  "bk": 8,  "version": "warp_tile_double_buffer"},
-            {"bx": 64,  "by": 128, "bk": 8,  "version": "warp_tile_double_buffer"},
-            # 6. cpasync
-            {"bx": 128, "by": 128, "bk": 8,  "version": "cpasync"},
-            {"bx": 128, "by": 64,  "bk": 8,  "version": "cpasync"},
-            {"bx": 64,  "by": 128, "bk": 8,  "version": "cpasync"},
-            # 7. tp32
-            {"bx": 128, "by": 128, "bk": 16, "version": "tf32"},
-            {"bx": 128, "by": 64,  "bk": 16, "version": "tf32"},
-            {"bx": 64,  "by": 128, "bk": 16, "version": "tf32"},
-            {"bx": 64,  "by": 64,  "bk": 16, "version": "tf32"},
+        cuda_config_native = [
+            {"bx": 32, "by": 8,  "bk": 32},   
+            {"bx": 32, "by": 16, "bk": 32}, 
+            {"bx": 32, "by": 32, "bk": 32},
         ]
+        cuda_config_tile = [
+            {"bx": 128, "by": 128, "bk": 8},
+            {"bx": 128, "by": 64,  "bk": 8},
+            {"bx": 64, "by": 128, "bk": 8},
+        ]
+        self.cuda_tuning_configs = self.make_configs(cuda_config_native, ["native", "smem_tile"])
+        self.cuda_tuning_configs.extend(self.make_configs(cuda_config_tile, 
+                                ["thread_tile", "thread_tile_opt", "warp_tile", "warp_tile_double_buffer", "cpasync"]))
+
 
     def get_throughput(self, case: Dict[str, Any], ms: float):
         if ms == 0: return 0

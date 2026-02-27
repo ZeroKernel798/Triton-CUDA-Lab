@@ -2,94 +2,101 @@
 #include <torch/extension.h>
 #include <string>
 
-// 纯净版外积 Kernel：无 float4，无 Swizzle
+// 纯外积版本 暂无任何优化
 template<int BM, int BN, int BK>
 __global__ void matrix_mul_kernel_outer_product_pure(const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C, 
                                                      int N, int M, int K) 
 {
     // 共享内存
-    __shared__ float sA[BK * BM];      // 布局: [BK][BM]  这里的 A 在 shared memory 中是被转置存放的，为了减少银行冲突
-    __shared__ float sB[BK * BN];      // 布局: [BK][BN]
+    __shared__ float sA[BK * BM];   //注意布局 为BK BM 需要transpose后写入
+    __shared__ float sB[BK * BN];
 
-    // 线程索引以及线程块的线程数量
-    int tx = threadIdx.x; 
-    int ty = threadIdx.y; 
-    int tid = ty * blockDim.x + tx;
-    int num_threads = blockDim.x * blockDim.y; 
+    // 获取二维线程索引
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
 
-    // 当前 Block 负责全局矩阵的起始位置 
+    // 计算线程在线程块内的顺序索引以及线程块的总线程数量
+    int idx = ty * blockDim.x + tx;
+    int thread_nums = blockDim.x * blockDim.y;
+
+    // 当前 Block 负责全局矩阵的起始位置 逻辑索引
     int row_start = blockIdx.y * BM;
     int col_start = blockIdx.x * BN;
 
-    // 寄存器 存储结果
+    // 使用寄存器存储累加和 每个线程负责8x8的tile
     float accum[8][8] = {0.0f};
 
-    // 外层 K 循环
-    for (int k_offset = 0; k_offset < K; k_offset += BK) {
-        
-        // 搬运 A 到 sA 采用类似于网格跨步循环的思路
-        // 将大小为 [BM][BK] 的数据搬运到 [BK][BM] 的 sA 中
-        for (int idx = tid; idx < BM * BK; idx += num_threads) {
-            int a_tile_row = idx / BK; // 在 BM 维度
-            int a_tile_col = idx % BK; // 在 BK 维度
-            
+    // 分块处理过程 按照BK的步进来处理
+    // 线程块先协力一起搬运数据 然后单个线程进行自己的计算
+    for(int k_offset = 0; k_offset < K; k_offset += BK){
+        // 仿照网格跨步循环的思路 实现线程块跨步循环搬运数据
+        // 先搬运矩阵A到共享内存
+        #pragma unroll
+        for(int i = idx; i < BK * BM; i += thread_nums){
+            // 计算当前拿的数据 在共享内存的行列逻辑索引
+            int a_tile_r = i / BK;
+            int a_tile_c = i % BK;
             float val = 0.0f;
-            // 边界检查
-            if (row_start + a_tile_row < M && k_offset + a_tile_col < K) {
-                val = A[(row_start + a_tile_row) * K + (k_offset + a_tile_col)];
-            }
-            // 注意存入的索引是 a_tile_col * BM + a_tile_row，实现了转置
-            sA[a_tile_col * BM + a_tile_row] = val;
+
+            // 注意判断数据是否有效
+            if((row_start + a_tile_r) < M && (k_offset + a_tile_c < K))
+                val = A[(row_start + a_tile_r) * K + (k_offset + a_tile_c)];
+
+            // 写入共享内存 注意写出变成了transpose
+            sA[a_tile_c * BM + a_tile_r] = val;
         }
 
-        // 搬运 B 到 sB 采用类似于网格跨步循环的思路
-        // 目标：将大小为 [BK][BN] 的数据搬运到 [BK][BN] 的 sB 中
-        for (int idx = tid; idx < BK * BN; idx += num_threads) {
-            int b_tile_row = idx / BN; // 在 BK 维度
-            int b_tile_col = idx % BN; // 在 BN 维度
-
+        // 搬运矩阵B到共享内存
+        #pragma unroll
+        for(int i = idx; i < BK * BN; i += thread_nums){
+            // 计算当前拿的数据 在共享内存的行列逻辑索引
+            int b_tile_r = i / BN;
+            int b_tile_c = i % BN;
             float val = 0.0f;
-            // 边界检查
-            if (k_offset + b_tile_row < K && col_start + b_tile_col < N) {
-                val = B[(k_offset + b_tile_row) * N + (col_start + b_tile_col)];
-            }
-            // 正常存入 无需转置
-            sB[b_tile_row * BN + b_tile_col] = val;
+
+            // 注意判断数据是否有效
+            if((k_offset + b_tile_r) < K && (col_start + b_tile_c) < N)
+                val = B[(k_offset + b_tile_r) * N + (col_start + b_tile_c)];
+
+            // 写入共享内存 注意写出变成了transpose
+            sB[b_tile_r * BN + b_tile_c] = val;
         }
 
         __syncthreads();
 
-        // 采用外积的方式进行计算
-        // 这里注意 外积方案中 计算阶段的索引顺序是 K->M->N
-        for (int kk = 0; kk < BK; kk++) {
-            // 当前线程负责输出 C 中 8x8 的小块
-            // 先把所需的 A 的 8 个元素和 B 的 8 个元素读到寄存器里
-            float reg_A[8];
-            float reg_B[8];
-            
-            for (int i = 0; i < 8; i++) {
-                // 读取 sA 的第 kk 行 (其实是原矩阵 A 的第 kk 列)
-                reg_A[i] = sA[kk * BM + ty * 8 + i]; 
-            }
-            for (int j = 0; j < 8; j++) {
-                // 读取 sB 的第 kk 行
-                reg_B[j] = sB[kk * BN + tx * 8 + j]; 
-            }
+        // 单个线程的计算过程
+        // 注意这个地方的索引顺序要遵循K->M->N
+        #pragma unroll
+        for(int kk = 0; kk < BK; kk++){
+            // 寄存器
+            float reg_a[8];
+            float reg_b[8];
 
-            // 计算一个列向量 (8x1) 乘以一个行向量 (1x8) -> 得到 8x8 矩阵，累加到 accum
-            for (int i = 0; i < 8; i++) {
-                for (int j = 0; j < 8; j++) {
-                    accum[i][j] += reg_A[i] * reg_B[j];
+            // 先从sA读取八个数据 因为sA transpose 这个地方是取行
+            // 如果不好理解sA的一列怎么获取 可以直接回到transpose前的一列逻辑 
+            #pragma unroll
+            for(int i = 0; i < 8; ++i) reg_a[i] = sA[kk * BM + ty * 8 + i]; 
+            // 从sB读取八个数据
+            #pragma unroll
+            for(int i = 0; i < 8; ++i) reg_b[i] = sB[kk * BN + tx * 8 + i]; 
+
+            // 计算 64 个输出 注意循环的对应关系
+            #pragma unroll
+            for(int i = 0; i < 8; ++i){
+                for(int j = 0; j < 8; ++j){
+                    accum[i][j] += reg_a[i] * reg_b[j];
                 }
             }
+
         }
         __syncthreads();
+
     }
 
-    // 写回阶段 
-    // 将 8x8 寄存器中的结果写回全局内存 C
-    for (int i = 0; i < 8; i++) {
-        for (int j = 0; j < 8; j++) {
+    // 写回阶段 将当前线程获取的值输出给矩阵C
+    #pragma unroll
+    for(int i = 0; i < 8; ++i){
+        for(int j = 0; j < 8; ++j){
             int g_r = row_start + ty * 8 + i;
             int g_c = col_start + tx * 8 + j;
             if (g_r < M && g_c < N) {
@@ -101,13 +108,12 @@ __global__ void matrix_mul_kernel_outer_product_pure(const float* __restrict__ A
 
 // 启动器
 void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, 
-           int N, int M, int K, int bx, int by, int bk, std::string version) {
+           int N, int M, int K, int bx, int by, int bk) {
     auto d_A = A.data_ptr<float>(); 
     auto d_B = B.data_ptr<float>(); 
     auto d_C = C.data_ptr<float>();
     
     // 配置 Block 线程数：(BN/8, BM/8)
-    int total_threads = (bx / 8) * (by / 8);
     dim3 threads(bx / 8, by / 8); 
     dim3 blocks((N + bx - 1) / bx, (M + by - 1) / by);
     
@@ -127,6 +133,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("solve", &solve, "Pure Outer Product GEMM",
           py::arg("A"), py::arg("B"), py::arg("C"), 
           py::arg("N"), py::arg("M"), py::arg("K"), 
-          py::arg("bx"), py::arg("by"), py::arg("bk"),
-          py::arg("version")); 
+          py::arg("bx"), py::arg("by"), py::arg("bk")); 
 }

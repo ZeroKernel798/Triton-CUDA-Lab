@@ -5,7 +5,7 @@
 #include <ATen/cuda/CUDAContext.h> 
 #include <ATen/cuda/Exceptions.h>
 
-void solve(torch::Tensor input, torch::Tensor output, int rows, int cols, int bx, int by) {
+void solve(torch::Tensor input, torch::Tensor output, int rows, int cols) {
     cublasHandle_t handle = at::cuda::getCurrentCUDABlasHandle();
 
     const float alpha = 1.0f;
@@ -43,7 +43,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("input"), 
           py::arg("output"), 
           py::arg("rows"), 
-          py::arg("cols"), 
-          py::arg("bx"), 
-          py::arg("by")); 
+          py::arg("cols")); 
 }

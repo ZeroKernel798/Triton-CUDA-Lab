@@ -3,7 +3,7 @@
 #include <torch/extension.h>
 #include <ATen/cuda/CUDAContext.h>
 
-void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int bx, int by) {
+void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N) {
     // 1. 获取 PyTorch 当前 Stream 的 cuBLAS 句柄
     cublasHandle_t handle = at::cuda::getCurrentCUDABlasHandle();
 
@@ -39,6 +39,5 @@ void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int bx, int
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     namespace py = pybind11;
     m.def("solve", &solve, "cuBLAS Matrix Addition Wrapper",
-          py::arg("A"), py::arg("B"), py::arg("C"), py::arg("N"), 
-          py::arg("bx"), py::arg("by")); 
+          py::arg("A"), py::arg("B"), py::arg("C"), py::arg("N")); 
 }

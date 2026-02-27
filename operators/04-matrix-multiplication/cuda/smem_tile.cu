@@ -49,7 +49,7 @@ __global__ void matrix_mul_kernel_tiled(const float* A, const float* B, float* C
 
 
 void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, 
-           int N, int M, int K, int bx, int by, int bk, std::string version) {
+           int N, int M, int K, int bx, int by, int bk) {
 
     const float* d_A = A.data_ptr<float>();
     const float* d_B = B.data_ptr<float>();
@@ -79,6 +79,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("solve", &solve, "Unified Matrix Multiplication Dispatcher",
           py::arg("A"), py::arg("B"), py::arg("C"), 
           py::arg("N"), py::arg("M"), py::arg("K"), 
-          py::arg("bx"), py::arg("by"), py::arg("bk"),
-          py::arg("version")); 
+          py::arg("bx"), py::arg("by"), py::arg("bk")); 
 }

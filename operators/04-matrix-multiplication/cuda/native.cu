@@ -16,7 +16,7 @@ __global__ void matrix_mul_kernel(const float* A, const float* B, float* C, int 
     }
 }
 
-void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int M, int K, int bx, int by, std::string version) {
+void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int M, int K, int bx, int by) {
     const float* d_A = A.data_ptr<float>();
     const float* d_B = B.data_ptr<float>();
     float* d_C = C.data_ptr<float>();
@@ -34,5 +34,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     namespace py = pybind11;
     m.def("solve", &solve, "2D Matrix Multiplication",
           py::arg("A"), py::arg("B"), py::arg("C"), py::arg("N"), 
-          py::arg("M"), py::arg("K"), py::arg("bx"), py::arg("by"), py::arg("version")); 
+          py::arg("M"), py::arg("K"), py::arg("bx"), py::arg("by")); 
 }

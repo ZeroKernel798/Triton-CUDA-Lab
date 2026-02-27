@@ -2,6 +2,13 @@ import torch
 from typing import Any, Dict, List
 
 class OperatorSpec:
+    @staticmethod
+    def make_configs(params: List[Dict[str, Any]], versions: List[str]) -> List[Dict[str, Any]]:
+        """
+        组合参数池和版本名，生成带 version 标签的配置列表
+        """
+        return [{**p, "version": v} for v in versions for p in params]
+    
     def __init__(self):
         # 设置算子名字以及输出名字
         self.name = "Matrix Transpose"
@@ -16,30 +23,24 @@ class OperatorSpec:
             {"rows": 8192, "cols": 8192},
             {"rows": 7000, "cols": 6000},
         ]
-        # 默认配置 给简单测试使用
-        self.base_cfg = {
-            "block_size": 256,    # 1D 用的
-            "bx": 16,             # 2D 用的 x
-            "by": 16,             # 2D 用的 y
-            "BLOCK_SIZE": 1024,   # Triton 用的
-            "num_warps": 4        # Triton 用的
-        }
-        # 核函数参数调优
+
+        # 配置调优
         # 针对triton
-        # 核函数参数调优
-        # 针对triton
-        self.tuning_configs = [
+        triton_tiles = [
             {"BLOCK_ROW": 32, "BLOCK_COL": 32, "num_warps": 2},
             {"BLOCK_ROW": 8, "BLOCK_COL": 8, "num_warps": 2},
             {"BLOCK_ROW": 16, "BLOCK_COL": 16, "num_warps": 2},
         ]
+        # 直接调用静态方法，生成针对 main 版本的调优列表
+        self.tuning_configs = self.make_configs(triton_tiles, ["test1"])
         # 针对cuda 
-        self.cuda_tuning_configs = [
+        cuda_tiles = [
             {"bx": 32, "by": 8},   # 线程粗化 4x (A100 的甜点区)
             {"bx": 16, "by": 16},  # 无粗化，1:1 映射
             {"bx": 32, "by": 16},  # 线程粗化 2x
             {"bx": 32, "by": 32},  # 无粗化
         ]
+        self.cuda_tuning_configs = self.make_configs(cuda_tiles, ["native", "shared_mm", "shared_mm_ILP"])
     
     def get_throughput(self, case: Dict[str, Any], ms: float):
         if ms is None or ms == 0: return 0
@@ -73,7 +74,6 @@ class OperatorSpec:
             "output": output_tensor,
             "rows": rows,
             "cols": cols,
-            **self.base_cfg 
         }
 
     def generate_functional_test(self) -> List[Dict[str, Any]]:
@@ -95,7 +95,6 @@ class OperatorSpec:
                     "output": torch.empty(c, r, device="cuda", dtype=dtype),
                     "rows": r,
                     "cols": c,
-                    **self.base_cfg 
                 }
             )
 
@@ -115,7 +114,6 @@ class OperatorSpec:
                     "output": torch.empty(cols, rows, device="cuda", dtype=dtype),
                     "rows": rows,
                     "cols": cols,
-                    **self.base_cfg 
                 }
             )
 
@@ -132,7 +130,6 @@ class OperatorSpec:
                     "output": torch.empty(cols, rows, device="cuda", dtype=dtype),
                     "rows": rows,
                     "cols": cols,
-                    **self.base_cfg 
                 }
             )
 
@@ -150,5 +147,4 @@ class OperatorSpec:
             "output": torch.zeros(cols, rows, device="cuda", dtype=dtype),
             "rows": rows,
             "cols": cols,
-            **self.base_cfg 
         }

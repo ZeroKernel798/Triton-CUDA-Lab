@@ -2,6 +2,13 @@ import torch
 from typing import Any, Dict, List
 
 class OperatorSpec:
+    @staticmethod
+    def make_configs(params: List[Dict[str, Any]], versions: List[str]) -> List[Dict[str, Any]]:
+        """
+        组合参数池和版本名，生成带 version 标签的配置列表
+        """
+        return [{**p, "version": v} for v in versions for p in params]
+    
     def __init__(self):
         # 设置算子名字以及输出名字
         self.name = "Matrix Addition"
@@ -12,32 +19,31 @@ class OperatorSpec:
         # 数据规模测试
         self.x_vals = [{"N": 2**i} for i in range(8, 14)]
         self.perf_input = 8192
-        # 默认配置 给简单测试使用
-        self.base_cfg = {
-            "block_size": 256,    # 1D 用的
-            "bx": 16,             # 2D 用的 x
-            "by": 16,             # 2D 用的 y
-            "BLOCK_SIZE": 1024,   # Triton 用的
-            "num_warps": 4        # Triton 用的
-        }
-        # 核函数参数调优
-        # 针对triton
-        self.tuning_configs = [
+
+        # 2. Triton 配置生产
+        triton_tiles = [
             {"BLOCK_SIZE": 32, "num_warps": 2},
             {"BLOCK_SIZE": 64, "num_warps": 4},
             {"BLOCK_SIZE": 128, "num_warps": 4},
             {"BLOCK_SIZE": 256, "num_warps": 8},
         ]
-        # 针对cuda 
-        self.cuda_tuning_configs = [
-            {"block_size": 64},   
-            {"block_size": 256},  
-            {"block_size": 1024}, 
-            {"bx": 32, "by": 8},  
-            {"bx": 32, "by": 8},  
-            {"bx": 16, "by": 16},  
-            {"bx": 8, "by": 32},
+        # 直接调用静态方法，生成针对 main 版本的调优列表
+        self.tuning_configs = self.make_configs(triton_tiles, ["main"])
+
+        # 3. CUDA 配置生产
+        # 分类准备参数池（物料）
+        cuda_1d = [{"block_size": bs} for bs in [64, 256, 1024]]
+        cuda_2d = [
+            {"bx": 32, "by": 8}, 
+            {"bx": 16, "by": 16}, 
+            {"bx": 8, "by": 32}
         ]
+
+        # 批量打标：让 native 和 float4 共享 1D 参数池
+        self.cuda_tuning_configs = self.make_configs(cuda_1d, ["flattened_float4"])
+        
+        # 2d版本
+        self.cuda_tuning_configs.extend(self.make_configs(cuda_2d, ["native", "float4"]))
     
     def get_throughput(self, case: Dict[str, Any], ms = None):
         if ms is None or ms == 0: return 0
@@ -65,7 +71,6 @@ class OperatorSpec:
             "B": B,
             "C": C,
             "N": N,
-            **self.base_cfg 
         }
 
     def generate_functional_test(self) -> List[Dict[str, Any]]:
@@ -78,7 +83,6 @@ class OperatorSpec:
             "B": torch.tensor([[5.0, 6.0], [7.0, 8.0]], device="cuda", dtype=dtype),
             "C": torch.zeros((2, 2), device="cuda", dtype=dtype),
             "N": 2,
-            **self.base_cfg
         })
 
         # all_zeros_4x4
@@ -87,7 +91,6 @@ class OperatorSpec:
             "B": torch.zeros((4, 4), device="cuda", dtype=dtype),
             "C": torch.zeros((4, 4), device="cuda", dtype=dtype),
             "N": 4,
-            **self.base_cfg 
         })
 
         # identity_plus_identity_3x3
@@ -96,7 +99,6 @@ class OperatorSpec:
             "B": torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], device="cuda", dtype=dtype),
             "C": torch.zeros((3, 3), device="cuda", dtype=dtype),
             "N": 3,
-            **self.base_cfg 
         })
 
         # negative_values_2x2
@@ -105,7 +107,6 @@ class OperatorSpec:
             "B": torch.tensor([[-5.0, -6.0], [-7.0, -8.0]], device="cuda", dtype=dtype),
             "C": torch.zeros((2, 2), device="cuda", dtype=dtype),
             "N": 2,
-            **self.base_cfg 
         })
 
         # mixed_positive_negative_2x2
@@ -114,7 +115,6 @@ class OperatorSpec:
             "B": torch.tensor([[-1.0, 2.0], [3.0, -4.0]], device="cuda", dtype=dtype),
             "C": torch.zeros((2, 2), device="cuda", dtype=dtype),
             "N": 2,
-            **self.base_cfg 
         })
 
         # single_element_1x1
@@ -123,7 +123,6 @@ class OperatorSpec:
             "B": torch.tensor([[8.0]], device="cuda", dtype=dtype),
             "C": torch.zeros((1, 1), device="cuda", dtype=dtype),
             "N": 1,
-            **self.base_cfg 
         })
 
         # large_N_16x16
@@ -132,7 +131,6 @@ class OperatorSpec:
             "B": torch.empty((16, 16), device="cuda", dtype=dtype).uniform_(-10.0, 10.0),
             "C": torch.zeros((16, 16), device="cuda", dtype=dtype),
             "N": 16,
-            **self.base_cfg 
         })
 
         # very_small_numbers
@@ -141,7 +139,6 @@ class OperatorSpec:
             "B": torch.tensor([[0.000001, 0.0000001], [0.00000001, 0.000000001]], device="cuda", dtype=dtype),
             "C": torch.zeros((2, 2), device="cuda", dtype=dtype),
             "N": 2,
-            **self.base_cfg 
         })
 
         # large_numbers
@@ -150,7 +147,6 @@ class OperatorSpec:
             "B": torch.tensor([[1000000.0, -10000000.0], [-1000000.0, 10000000.0]], device="cuda", dtype=dtype),
             "C": torch.zeros((2, 2), device="cuda", dtype=dtype),
             "N": 2,
-            **self.base_cfg 
         })
 
         # non_power_of_two_size_7x7
@@ -159,7 +155,6 @@ class OperatorSpec:
             "B": torch.empty((7, 7), device="cuda", dtype=dtype).uniform_(-5.0, 5.0),
             "C": torch.zeros((7, 7), device="cuda", dtype=dtype),
             "N": 7,
-            **self.base_cfg 
         })
 
         # medium_size_32x32
@@ -168,7 +163,6 @@ class OperatorSpec:
             "B": torch.empty((32, 32), device="cuda", dtype=dtype).uniform_(-100.0, 100.0),
             "C": torch.zeros((32, 32), device="cuda", dtype=dtype),
             "N": 32,
-            **self.base_cfg  
         })
 
         return test_cases
@@ -182,5 +176,4 @@ class OperatorSpec:
             "B": torch.empty(N, N, device="cuda", dtype=dtype).uniform_(-1000.0, 1000.0),
             "C": torch.zeros(N, N, device="cuda", dtype=dtype),
             "N": N,
-            **self.base_cfg  
         }

@@ -2,37 +2,39 @@ import torch
 from typing import Any, Dict, List
 
 class OperatorSpec:
+    @staticmethod
+    def make_configs(params: List[Dict[str, Any]], versions: List[str]) -> List[Dict[str, Any]]:
+        """
+        组合参数池和版本名，生成带 version 标签的配置列表
+        """
+        return [{**p, "version": v} for v in versions for p in params]
+    
     def __init__(self):
-        # 设置算子和输出名字
+        # 1. 基础信息设置
         self.name = "Vector Addition"
         self.output_name = "C"
-        # 设置精度要求
-        self.atol = 1e-05
-        self.rtol = 1e-05
-        # 数据规模测试
+        self.atol, self.rtol = 1e-05, 1e-05
         self.perf_input = 1024 * 1024 * 16
         self.x_vals = [{"N": 2**i} for i in range(12, 25)]
-        self.base_cfg = {
-            "block_size": 256,    # 1D 用的
-            "BLOCK_SIZE": 1024,   # Triton 用的
-            "num_warps": 4        # Triton 用的
-        }
-        # 核函数参数调优
-        # 针对triton
-        self.tuning_configs = [
+
+        # 2. CUDA 参数生产线
+        # 先定义纯粹的硬件参数（不带 version）
+        cuda_1d_params = [{"block_size": bs} for bs in [32, 128, 256, 512, 1024]]
+        
+        # 直接批量生成：native 和 float4 共享这套参数
+        self.cuda_tuning_configs = self.make_configs(cuda_1d_params, ["native", "float4"])
+
+        # 3. Triton 参数生产线
+        triton_params = [
             {"BLOCK_SIZE": 32, "num_warps": 2},
             {"BLOCK_SIZE": 64, "num_warps": 4},
             {"BLOCK_SIZE": 128, "num_warps": 4},
             {"BLOCK_SIZE": 256, "num_warps": 8},
         ]
-        # 针对cuda
-        self.cuda_tuning_configs = [
-            {"block_size": 32},   
-            {"block_size": 128},
-            {"block_size": 256},  
-            {"block_size": 512},
-            {"block_size": 1024}, 
-        ]
+        
+        # 批量生成：Triton 文件名如果是 Triton_main.py，这里就填 main
+        self.tuning_configs = self.make_configs(triton_params, ["main"])
+    
 
     def get_throughput(self, case: Dict[str, Any], ms = None):
         # 向量加法吞吐量计算
@@ -60,7 +62,6 @@ class OperatorSpec:
             "B": B,
             "C": C,
             "N": N,
-            **self.base_cfg 
         }
 
     def generate_functional_test(self) -> List[Dict[str, Any]]:
@@ -95,7 +96,6 @@ class OperatorSpec:
                     "B": torch.tensor(b_vals, device="cuda", dtype=dtype),
                     "C": torch.zeros(n, device="cuda", dtype=dtype),
                     "N": n,
-                    **self.base_cfg 
                 }
             )
 
@@ -111,7 +111,6 @@ class OperatorSpec:
                     "B": torch.empty(size, device="cuda", dtype=dtype).uniform_(*b_range),
                     "C": torch.zeros(size, device="cuda", dtype=dtype),
                     "N": size,
-                    **self.base_cfg  
                 }
             )
 
@@ -125,5 +124,4 @@ class OperatorSpec:
             "B": torch.empty(N, device="cuda", dtype=dtype).uniform_(-1.0, 1.0),
             "C": torch.zeros(N, device="cuda", dtype=dtype),
             "N": N,
-            **self.base_cfg 
         }

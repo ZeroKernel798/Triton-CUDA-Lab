@@ -48,5 +48,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     namespace py = pybind11;
     m.def("solve", &solve, "Vector Addition Kernel (Pybind11)",
           py::arg("A"), py::arg("B"), py::arg("C"), py::arg("N"), 
-          py::arg("block_size")); // 显式命名
+          py::arg("block_size")); 
 }
