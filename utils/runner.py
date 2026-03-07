@@ -107,7 +107,8 @@ class BenchmarkRunner:
             for _ in range(5):
                 self.dispatch_call(solve_fn, final_case, is_cuda, params, has_kwargs)
             
-            with KernelProfiler.profile_scope(enabled=True, label=f"Profile_{name}_Best"):
+            # 这样在 NSYS 统计表里，Instances 会直接显示为 9
+            with KernelProfiler.profile_scope(enabled=True, label="Lab_Kernel_Capture"):
                 self.dispatch_call(solve_fn, final_case, is_cuda, params, has_kwargs)
             
             print(f"    ✅ 采样完成。")
