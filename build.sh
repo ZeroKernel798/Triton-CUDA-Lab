@@ -21,3 +21,4 @@ echo "🏗️  开始并行编译 (使用环境: $CURRENT_PYTHON)..."
 sudo -u $REAL_USER $CURRENT_PYTHON build_lab.py
 
 echo "✨ 全部搞定！现在你可以直接跑 run_lab.py 了。"
+

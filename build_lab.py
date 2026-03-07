@@ -1,214 +1,101 @@
-# # import os
-# # import torch
-# # import glob
-# # import argparse
-# # import multiprocessing  
-# # from concurrent.futures import ProcessPoolExecutor
-# # from utils.compiler import KernelEngine
-
-# # # 找到显卡架构并设置环境变量，确保 PyTorch 编译插件能正确识别
-# # def auto_set_cuda_arch():
-# #     if torch.cuda.is_available():
-# #         # 获取当前显卡的算力 (例如 A100 会返回 (8, 0))
-# #         major, minor = torch.cuda.get_device_capability()
-# #         arch = f"{major}.{minor}"
-        
-# #         # 写入环境变量，PyTorch 编译插件会自动读取
-# #         os.environ["TORCH_CUDA_ARCH_LIST"] = arch
-        
-# #         print(f"🚀 [InferX Autodetect] 检测到当前 GPU 算力: {arch}")
-# #         print(f"✅ 已自动设置 TORCH_CUDA_ARCH_LIST={arch}，将进行针对性编译。")
-# #     else:
-# #         print("⚠️ [InferX Warning] 未检测到 CUDA 环境，将使用默认配置。")
-
-# # def compile_job(cu_file):
-# #     try:
-# #         KernelEngine.setup_cuda(cu_file)
-# #         return f"{os.path.basename(cu_file)} 编译完成/已是最新"
-# #     except Exception as e:
-# #         return f"{os.path.basename(cu_file)} 失败: {e}"
-
-# # def main():
-# #     # 关键修复：必须在 main 的最开头设置 ---
-# #     # spawn 会启动全新的进程，避免 fork 导致的 CUDA 环境冲突
-# #     if multiprocessing.get_start_method(allow_none=True) is None:
-# #         multiprocessing.set_start_method('spawn')
-        
-# #     parser = argparse.ArgumentParser(description="Triton-CUDA-Lab 预编译工具")
-# #     parser.add_argument("--op", type=str, help="指定编译某个算子")
-# #     args = parser.parse_args()
-
-# #     path_pattern = f"operators/{args.op if args.op else '*'}/cuda/*.cu"
-# #     cu_files = glob.glob(path_pattern)
-    
-# #     if not cu_files:
-# #         print("未发现待编译的 CUDA 文件。")
-# #         return
-
-# #     print(f"发现 {len(cu_files)} 个内核，开始并行构建....")
-
-# #     # 3. 建议 max_workers 设为 4，避免内存和调度打架
-# #     with ProcessPoolExecutor(max_workers=2) as executor:
-# #         results = list(executor.map(compile_job, cu_files))
-
-# #     for r in results:
-# #         print(r)
-
-# # if __name__ == "__main__":
-# #     # 第一时间锁定架构，确保环境变量在进程池启动前已经生效
-# #     auto_set_cuda_arch() 
-    
-# #     # 启动main函数，进行编译任务
-# #     main()
-
-# import os
-# import torch
-# import glob
-# import argparse
-# import time
-# from utils.compiler import KernelEngine
-
-# def auto_set_cuda_arch():
-#     """自动设置算力环境变量，这是 CUDA 编译加速的关键之一"""
-#     if torch.cuda.is_available():
-#         major, minor = torch.cuda.get_device_capability()
-#         arch = f"{major}.{minor}"
-#         os.environ["TORCH_CUDA_ARCH_LIST"] = arch
-#         # 强制让编译工具使用 Ninja (如果系统已安装)
-#         os.environ["USE_NINJA"] = "1"
-#         print(f"🚀 [InferX] 检测到 GPU 算力: {arch} | 已启用 Ninja 并行加速")
-#     else:
-#         print("⚠️ [InferX Warning] 未检测到 CUDA 环境")
-
-# def get_cu_files(op_name=None):
-#     """灵活的文件搜索逻辑"""
-#     if op_name:
-#         # 支持精确匹配或模糊匹配目录
-#         path_pattern = f"operators/*{op_name}*/cuda/*.cu"
-#     else:
-#         path_pattern = "operators/*/cuda/*.cu"
-    
-#     files = glob.glob(path_pattern)
-#     # 过滤掉一些不直接编译的头文件或辅助文件（可选）
-#     return [f for f in files if f.endswith('.cu')]
-
-# def main():
-#     parser = argparse.ArgumentParser(description="Triton-CUDA-Lab 高性能编译器")
-#     parser.add_argument("--op", type=str, help="指定编译某个算子 (例如: 'matrix_mul')")
-#     parser.add_argument("--force", action="store_true", help="强制全量重新编译")
-#     args = parser.parse_args()
-
-#     # 1. 架构锁定
-#     auto_set_cuda_arch()
-
-#     # 2. 搜寻目标文件
-#     cu_files = get_cu_files(args.op)
-    
-#     if not cu_files:
-#         print(f"❌ 未发现待编译文件 (搜索模式: {args.op if args.op else 'ALL'})")
-#         return
-
-#     print(f"🔍 发现 {len(cu_files)} 个内核，准备进入构建流程...")
-#     start_time = time.time()
-
-#     # 3. 核心编译循环
-#     # 注意：不要在 Python 层开多进程！
-#     # 因为 KernelEngine.setup_cuda 内部调用的 cpp_extension.load 
-#     # 本身就会启动多线程 Ninja 来榨干 CPU 性能。
-#     success_count = 0
-#     for i, cu_file in enumerate(cu_files):
-#         target_name = os.path.basename(cu_file).replace('.cu', '')
-#         print(f"[{i+1}/{len(cu_files)}] 正在同步状态: {target_name}...", end="\r")
-        
-#         try:
-#             # KernelEngine 内部应逻辑：如果文件未改动，Ninja 会秒跳过
-#             KernelEngine.setup_cuda(cu_file)
-#             success_count += 1
-#         except Exception as e:
-#             print(f"\n❌ {target_name} 编译失败: {e}")
-
-#     # 4. 统计
-#     total_time = time.time() - start_time
-#     print(f"\n\n✨ 编译完成！")
-#     print(f"📊 成功: {success_count} | 耗时: {total_time:.2f}s")
-#     print(f"📂 缓存目录: ~/.cache/torch_extensions/")
-
-# if __name__ == "__main__":
-#     main()
-
 import os
-import torch
-import glob
-import argparse
-import time
 import sys
-from utils.compiler import KernelEngine, clean_build  # 确保从 utils 导入了 clean_build
+import glob
+import time
+import argparse
+from utils.compiler import KernelEngine, clean_build
 
-def auto_set_cuda_arch():
-    """自动设置算力环境变量，这是 CUDA 编译加速的关键之一"""
-    if torch.cuda.is_available():
-        major, minor = torch.cuda.get_device_capability()
-        arch = f"{major}.{minor}"
-        os.environ["TORCH_CUDA_ARCH_LIST"] = arch
-        os.environ["USE_NINJA"] = "1"
-        print(f"🚀 [InferX] 检测到 GPU 算力: {arch} | 已启用 Ninja 并行加速")
-    else:
-        print("⚠️ [InferX Warning] 未检测到 CUDA 环境")
+def format_time(seconds):
+    """将秒数格式化为分:秒"""
+    if seconds is None or seconds < 0: return "--:--"
+    m, s = divmod(int(seconds), 60)
+    return f"{m:02d}:{s:02d}"
 
-def get_cu_files(op_name=None):
-    """灵活的文件搜索逻辑"""
-    if op_name:
-        path_pattern = f"operators/*{op_name}*/cuda/*.cu"
-    else:
-        path_pattern = "operators/*/cuda/*.cu"
+def draw_progress(current, total, op_name, file_name, elapsed_time, bar_width=25):
+    """绘制带进度条、语义化路径和精准 ETA 的界面"""
+    progress = float(current) / total
+    filled = int(progress * bar_width)
+    bar = "█" * filled + "░" * (bar_width - filled)
     
-    files = glob.glob(path_pattern)
-    return [f for f in files if f.endswith('.cu')]
+    # 改进 ETA：只有完成 1 个以上才计算，否则显示估算中
+    if current > 1:
+        # 基于已完成的进度推算总时长：total_est = elapsed / (current-1) * total
+        # 剩余时长 = total_est - elapsed
+        eta_seconds = (elapsed_time / (current - 1)) * (total - (current - 1)) - (elapsed_time / (current - 1))
+        eta_str = format_time(max(0, eta_seconds))
+    else:
+        eta_str = "计算中"
+    
+    elapsed_str = format_time(elapsed_time)
+    display_text = f"{op_name}/{file_name}"
+    
+    # 使用 :<35 确保长路径不会导致行残影，:>3 确保百分比对齐
+    sys.stdout.write(
+        f"\r进度: |{bar}| {int(progress * 100):>3}% "
+        f"[{elapsed_str} < {eta_str}] "
+        f"处理中: {display_text:<35}"
+    )
+    sys.stdout.flush()
 
 def main():
-    parser = argparse.ArgumentParser(description="Triton-CUDA-Lab 高性能编译器")
-    parser.add_argument("--op", type=str, help="指定编译某个算子 (例如: 'matrix_mul')")
-    parser.add_argument("--force", action="store_true", help="强制全量重新编译 (基于MD5失效)")
-    parser.add_argument("--clean", action="store_true", help="清理 build 目录、.so 文件和 Python 缓存")
+    parser = argparse.ArgumentParser(description="Triton-CUDA-Lab 智能模糊编译器")
+    parser.add_argument("--op", type=str, help="模糊匹配关键词 (如: 04, softmax, cublas)")
+    parser.add_argument("--force", action="store_true", help="强制重新编译")
+    parser.add_argument("--clean", action="store_true", help="清理构建产物")
     args = parser.parse_args()
 
-    # --- 1. 处理清理逻辑 ---
+    # --- 1. 环境预检 ---
     if args.clean:
         clean_build()
-        # 如果用户只输入了 --clean 而没有指定 --op 或其他意图，清理完直接退出
-        if not args.op and "--force" not in sys.argv:
-            print("✨ 清理完成。")
-            return
+        if not args.op: return
 
-    # --- 2. 正常编译流程 ---
-    auto_set_cuda_arch()
+    arch_sm, arch_list = KernelEngine.get_gpu_info()
+    print(f"💡 Device: {arch_sm} ({arch_list})")
+    nv_threads = KernelEngine.init_performance_strategy()
 
-    cu_files = get_cu_files(args.op)
+    # --- 2. 核心改动：递归模糊匹配 ---
+    # ** 表示递归搜索所有子目录
+    all_cu_files = glob.glob("operators/**/*.cu", recursive=True)
     
-    if not cu_files:
-        if not args.clean: # 如果刚刚没清理过且没找到文件，报错
-            print(f"❌ 未发现待编译文件 (搜索模式: {args.op if args.op else 'ALL'})")
+    if args.op:
+        target = args.op.lower()
+        # 只要路径中包含用户输入的字符串（不分大小写）就命中
+        cu_files = sorted([f for f in all_cu_files if target in f.lower()])
+    else:
+        cu_files = sorted(all_cu_files)
+    
+    total = len(cu_files)
+    if total == 0:
+        print(f"⚠️ 未发现匹配 '{args.op if args.op else 'ALL'}' 的内核文件")
         return
 
-    print(f"🔍 发现 {len(cu_files)} 个内核，准备进入构建流程...")
+    print(f"🔍 发现 {total} 个内核，启动构建流程...")
     start_time = time.time()
 
-    success_count = 0
+    # --- 3. 构建循环 ---
+    success = 0
     for i, cu_file in enumerate(cu_files):
-        target_name = os.path.basename(cu_file).replace('.cu', '')
-        print(f"[{i+1}/{len(cu_files)}] 正在处理: {target_name}...", end="\r")
+        # 语义化路径提取：operators/04-softmax/cuda/kernel.cu -> (04-softmax, kernel)
+        parts = cu_file.split(os.sep)
+        op_folder = parts[-3] if len(parts) >= 3 else "root"
+        file_base = os.path.basename(cu_file).replace('.cu', '')
+        
+        current_elapsed = time.time() - start_time
+        draw_progress(i + 1, total, op_folder, file_base, current_elapsed)
         
         try:
-            # 如果指定了 --force，可以让 setup_cuda 忽略 MD5 检查
-            KernelEngine.setup_cuda(cu_file, force_recompile=args.force)
-            success_count += 1
+            KernelEngine.setup_cuda(cu_file, nvcc_threads=nv_threads, force_recompile=args.force)
+            success += 1
         except Exception as e:
-            print(f"\n❌ {target_name} 编译失败: {e}")
+            # 报错时强制换行，并打印简减后的错误
+            sys.stdout.write(f"\n❌ 错误: {op_folder}/{file_base} -> {str(e)[:70]}...\n")
+            sys.stdout.flush()
 
-    total_time = time.time() - start_time
+    # --- 4. 总结 ---
+    final_duration = time.time() - start_time
     print(f"\n\n✨ 构建任务结束！")
-    print(f"📊 成功: {success_count}/{len(cu_files)} | 耗时: {total_time:.2f}s")
-    print(f"📂 产物目录: {os.path.join(os.getcwd(), 'build')}")
+    print(f"📊 成功率: {success}/{total} | 总耗时: {format_time(final_duration)}")
+    print(f"📂 产物路径: {os.path.join(os.getcwd(), 'build')}")
 
 if __name__ == "__main__":
     main()
