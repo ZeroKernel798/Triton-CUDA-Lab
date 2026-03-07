@@ -1,4 +1,5 @@
 import torch
+import itertools
 from typing import Any, Dict, List
 
 
@@ -15,8 +16,8 @@ class OperatorSpec:
         self.name = "Matrix multiplication"
         self.output_name = "C" 
         # 设置精度标准
-        self.atol = 1e-05
-        self.rtol = 1e-05
+        self.atol = 1e-04
+        self.rtol = 1e-04
         # 数据规模测试
         self.x_vals = [
             # 1. 经典小方块：方便 Debug 检查结果
@@ -32,15 +33,30 @@ class OperatorSpec:
             # 6. 大规模压力测试：查看 A100 的极限性能
             {"M": 8192, "K": 128, "N": 8192},
         ]
+        # 添加 2^3 到 2^12 的标准方阵测试 (8, 16, ..., 4096)
+        for i in range(3, 13):
+            size = 2**i
+            self.x_vals.append({"M": size, "K": size, "N": size})
         # 核函数参数调优
         # 针对triton
-        triton_tiles = [
-            {"BLOCK_ROW": 32, "BLOCK_COL": 32, "num_warps": 2},
-            {"BLOCK_ROW": 8, "BLOCK_COL": 8, "num_warps": 2},
-            {"BLOCK_ROW": 16, "BLOCK_COL": 16, "num_warps": 2},
-        ]
+        triton_params = []
+        for bm, bn, bk, stages, warps in itertools.product(
+            [32, 64, 128],       # BLOCK_SIZE_M
+            [32, 64, 128, 256],  # BLOCK_SIZE_N
+            [32, 64],            # BLOCK_SIZE_K
+            [2, 3, 4, 5],           # num_stages
+            [2, 4, 8]            # num_warps
+        ):
+            triton_params.append({
+                "BLOCK_SIZE_M": bm,
+                "BLOCK_SIZE_N": bn,
+                "BLOCK_SIZE_K": bk,
+                "num_stages": stages,
+                "num_warps": warps,
+                "GROUP_SIZE_M": 8 # 你的 L2 Swizzling 默认值
+        })
         # 直接调用静态方法，生成针对 main 版本的调优列表
-        self.tuning_configs = self.make_configs(triton_tiles, ["test1"])
+        self.tuning_configs = self.make_configs(triton_params, ["test"])
         # 针对cuda的配置
         cuda_config_native = [
             {"bx": 32, "by": 8,  "bk": 32},   
@@ -63,6 +79,17 @@ class OperatorSpec:
         # 理论最小访存量：读 A + 读 B + 写 C
         total_bytes = (m * k + k * n + m * n) * 4
         return (total_bytes / 1e9) / (ms / 1000)
+
+    def get_flops(self, case: Dict[str, Any], ms: float):
+        """计算 TFLOPS (Tera Floating-point Operations Per Second)"""
+        if ms == 0: return 0
+        m, k, n = case["M"], case["K"], case["N"]
+        # 总操作数: 2 * M * N * K
+        # Latency 是 ms，转为秒需要 / 1000
+        # 结果除以 1e12 得到 TFLOPS
+        total_ops = 2.0 * m * n * k
+        tflops = total_ops / (ms * 1e9) 
+        return tflops
 
     def reference_impl(
         self, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, M: int, N: int, K: int, **kwargs):

@@ -13,6 +13,8 @@ def run_lab():
     parser.add_argument("--epoch", type=int, default=1000)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--bench_mode", choices=['scaling', 'tuning'], default='scaling')
+    parser.add_argument("--metric", choices=['bw', 'flops', 'both'], default='bw', 
+                        help="选择绘图指标: 带宽(bw), 算力(flops), 或全部(both)")
     args = parser.parse_args()
 
     cfg_path = os.path.join(os.getcwd(), 'operators', args.op, 'test_cfg.py')
@@ -45,7 +47,10 @@ def run_lab():
                 if hasattr(triton_mod, 'solve'): runner.run_benchmark(triton_mod.solve, f"{file_name}", False)
             except Exception as e: print(f"运行错误 [{file_name}]: {e}")
 
-    logger.plot(args.op, args.bench_mode)
+    metrics_to_plot = ['bw', 'flops'] if args.metric == 'both' else [args.metric]
+    
+    for m in metrics_to_plot:
+        logger.plot(args.op, args.bench_mode, metric_type=m)
 
 if __name__ == "__main__":
     run_lab()
