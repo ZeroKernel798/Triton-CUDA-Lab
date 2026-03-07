@@ -1,6 +1,7 @@
 import torch
 from triton.testing import do_bench
 from .prober import KernelProber
+from .logger import KernelProfiler  # 假设你已将之前讨论的工具挪到了 logger.py
 
 class BenchmarkRunner:
     def __init__(self, spec, args, logger):
@@ -9,42 +10,30 @@ class BenchmarkRunner:
         self.logger = logger
 
     def dispatch_call(self, fn, p_case, is_cuda, params, has_kwargs):
+        """保持原有逻辑：分发 CUDA 或 Triton 调用"""
         if is_cuda:
-            # CUDA 逻辑：严格匹配 C++ 函数签名需要的参数，仅支持关键字传参
             args_to_pass = {p: p_case[p] for p in params if p in p_case}
             return fn(**args_to_pass)
         else:
-            # Triton 逻辑：保持灵活性
             if has_kwargs: 
                 return fn(**p_case)
-            # 如果没有 **kwargs，则根据函数签名过滤参数
             filtered = {p: p_case[p] for p in params if p in p_case}
             return fn(**filtered)
 
     def measure_latency(self, solve_fn, p_case, is_cuda, params, has_kwargs):
-        """
-        使用 triton.testing.do_bench 替代手写的 Event 循环
-        """
-        # 1. 准备调用闭包 (Closure)
-        # 因为 do_bench 接受的是一个不带参数的 lambda
+        """使用 do_bench 测量中值延迟"""
         def benchmark_func():
             self.dispatch_call(solve_fn, p_case, is_cuda, params, has_kwargs)
-
-        # 2. 调用 do_bench
-        # warmup: 预热次数 (对应你之前的 self.args.warmup)
-        # rep: 正式运行迭代次数 (对应你之前的 self.args.epoch)
-        # return_mode: "median" 返回中位数, "max" 返回最大值, "min" 返回最小值
-        ms = do_bench(
+        
+        return do_bench(
             benchmark_func, 
             warmup=self.args.warmup, 
             rep=self.args.epoch,
             return_mode="median"
         )
-        
-        return ms
 
     def run_benchmark(self, solve_fn, name, is_cuda):
-        # 1. 探测与元数据准备
+        # 1. 元数据准备
         params, has_kwargs = KernelProber.probe(solve_fn)
         atol = getattr(self.spec, "atol", 1e-5)
         rtol = getattr(self.spec, "rtol", 1e-5)
@@ -55,7 +44,7 @@ class BenchmarkRunner:
         print(f"📂 FILE: {name} | {'CUDA' if is_cuda else 'Triton'}")
         print("="*80)
 
-        # 内部校验辅助函数：支持版本感知的配置
+        # 内部校验辅助函数
         def validate_accuracy(case, label):
             configs = self.spec.cuda_tuning_configs if is_cuda else self.spec.tuning_configs
             target_cfg = next((c for c in configs if c.get("version") == current_impl_name), {})
@@ -68,12 +57,10 @@ class BenchmarkRunner:
             
             if not torch.allclose(case[out_n], ref_case[out_n], atol=atol, rtol=rtol):
                 print(f"❌ {label} 精度检查失败！")
-                clean_cfg = {k: v for k, v in case.items() if not isinstance(v, torch.Tensor)}
-                print(f"   使用的配置: {clean_cfg}")
                 return False
             return True
 
-        # 2. 功能验证阶段
+        # --- 2. 功能验证阶段 (Profile 前必须保证代码是对的) ---
         if hasattr(self.spec, "generate_example_test"):
             if not validate_accuracy(self.spec.generate_example_test(), "Example Test"): return
             print(f"    ✅ 最小闭环精度校验通过")
@@ -84,7 +71,49 @@ class BenchmarkRunner:
                 if not validate_accuracy(case, f"Case {i}"): return
             print(f"    ✅ 所有功能回归测试全部通过！")
 
-        # 3. 性能测试阶段
+        # --- 3. Profiling 采样阶段 (nsys/ncu 调试) ---
+        if getattr(self.args, "profile", False):
+            print(f"📸 [PROFILE MODE] 正在复刻 Tuning 逻辑寻找最优配置...")
+
+            # ✨ 核心改动：使用与 Tuning 模式完全一样的 base_case
+            base_case = self.spec.generate_performance_test({})
+            shape_desc = "x".join([str(v) for k, v in base_case.items() if isinstance(v, (int, float))])
+            
+            # 获取该实现的所有候选配置
+            configs = self.spec.cuda_tuning_configs if is_cuda else self.spec.tuning_configs
+            if current_impl_name == "cublas":
+                configs_to_try = [{}]
+            else:
+                configs_to_try = [c for c in configs if c.get("version") == current_impl_name]
+            
+            # A. 执行“海选” (和 Tuning 模式一模一样)
+            best_ms = float('inf')
+            best_cfg = {}
+            
+            print(f"   ⚡ 正在对 {len(configs_to_try)} 组配置进行压测筛选 (Size: {shape_desc})...")
+            for config in configs_to_try:
+                p_case = {**base_case, **config}
+                ms = self.measure_latency(solve_fn, p_case, is_cuda, params, has_kwargs)
+                if ms < best_ms:
+                    best_ms = ms
+                    best_cfg = config
+            
+            # B. 锁定冠军配置
+            final_case = {**base_case, **best_cfg}
+            display_cfg = {k: v for k, v in best_cfg.items() if k != 'version'}
+            print(f"🏆 采样配置已锁定: {display_cfg} (Latency: {best_ms:.4f} ms)")
+
+            # C. 预热与采样
+            for _ in range(5):
+                self.dispatch_call(solve_fn, final_case, is_cuda, params, has_kwargs)
+            
+            with KernelProfiler.profile_scope(enabled=True, label=f"Profile_{name}_Best"):
+                self.dispatch_call(solve_fn, final_case, is_cuda, params, has_kwargs)
+            
+            print(f"    ✅ 采样完成。")
+            return # 退出，不跑后面的逻辑
+
+        # --- 4. 性能测试阶段 ---
         if hasattr(self.spec, "generate_performance_test"):
             print(f"    Running Performance Tests...")
             configs = self.spec.cuda_tuning_configs if is_cuda else self.spec.tuning_configs

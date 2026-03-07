@@ -1,7 +1,31 @@
 import matplotlib.pyplot as plt
 import torch
 import numpy as np
+import torch.cuda.nvtx as nvtx
 
+
+class KernelProfiler:
+    """微观分析：负责 Nsight Systems / Compute 的采样控制"""
+    @staticmethod
+    def profile_scope(enabled=False, label="Kernel"):  # ✨ 统一改为 profile_scope
+        class ProfileContext:
+            def __enter__(self):
+                if enabled:
+                    import torch
+                    import torch.cuda.nvtx as nvtx
+                    torch.cuda.synchronize()
+                    torch.cuda.profiler.start()
+                    nvtx.range_push(label)
+
+            def __exit__(self, type, value, traceback):
+                if enabled:
+                    import torch
+                    import torch.cuda.nvtx as nvtx
+                    torch.cuda.synchronize()
+                    nvtx.range_pop()
+                    torch.cuda.profiler.stop()
+        return ProfileContext()
+    
 class LabLogger:
     def __init__(self):
         self.results = {}

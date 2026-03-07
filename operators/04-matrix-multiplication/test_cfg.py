@@ -41,11 +41,16 @@ class OperatorSpec:
         # 针对triton
         triton_params = []
         for bm, bn, bk, stages, warps in itertools.product(
-            [32, 64, 128],       # BLOCK_SIZE_M
-            [32, 64, 128, 256],  # BLOCK_SIZE_N
-            [32, 64],            # BLOCK_SIZE_K
-            [2, 3, 4, 5],           # num_stages
-            [2, 4, 8]            # num_warps
+            # [32, 64, 128],       # BLOCK_SIZE_M
+            # [32, 64, 128, 256],  # BLOCK_SIZE_N
+            # [32, 64],            # BLOCK_SIZE_K
+            # [2, 3, 4, 5],           # num_stages
+            # [2, 4, 8]            # num_warps
+            [32],       # BLOCK_SIZE_M
+            [32, 256],  # BLOCK_SIZE_N
+            [32],            # BLOCK_SIZE_K
+            [2],           # num_stages
+            [2]            # num_warps
         ):
             triton_params.append({
                 "BLOCK_SIZE_M": bm,
