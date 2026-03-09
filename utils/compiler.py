@@ -87,6 +87,10 @@ class KernelEngine:
             extra_cuda_cflags=[
                 '-lineinfo',
                 '-O3', '--use_fast_math', '-allow-unsupported-compiler',
+                '-U__CUDA_NO_HALF_OPERATORS__',
+                '-U__CUDA_NO_HALF_CONVERSIONS__',
+                '-U__CUDA_NO_HALF2_OPERATORS__',
+                '-U__CUDA_NO_BFLOAT16_CONVERSIONS__',
                 '--threads', '4', 
                 '-gencode', f'arch=compute_{major_v}{minor_v},code=sm_{major_v}{minor_v}'
             ],

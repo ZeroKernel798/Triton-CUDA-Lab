@@ -4,9 +4,13 @@
 #include <float.h>
 #include <math.h>
 
+// 修正宏：确保参数名与 solve 函数内部定义的变量名一致
+#define LAUNCH_FLASH_ATTN(BR, BC) \
+    flash_attn_ultra_kernel<BR, BC, 128><<<grid, block, smem_size>>>( \
+        d_Q, d_K, d_V, d_O, M, N, d, attention_scale);
+
 // -----------------------------------------------------------------------
 // Flash Attention Ultra Kernel
-// 保持你极致优化的计算逻辑不变
 // -----------------------------------------------------------------------
 template<int Br, int Bc, int max_d>
 __global__ void flash_attn_ultra_kernel(
@@ -22,17 +26,11 @@ __global__ void flash_attn_ultra_kernel(
     float* s_V = s_mem + Bc * d;      
 
     constexpr int cols_per_thread = max_d / 32;
-    float r_acc[cols_per_thread];
-    float r_q[cols_per_thread];
+    float r_acc[cols_per_thread] = {0.0f};
+    float r_q[cols_per_thread] = {0.0f};
     
-    #pragma unroll
-    for (int i = 0; i < cols_per_thread; i++) {
-        r_acc[i] = 0.0f;
-        r_q[i] = 0.0f;
-    }
-
     float m_prev = -FLT_MAX;
-    float l_prev = 0.0f;
+    float l_prev = 0.0f;    
 
     if (row < M) {
         #pragma unroll
@@ -71,11 +69,9 @@ __global__ void flash_attn_ultra_kernel(
 
                 float score = dot * attention_scale; 
                 float m_new = fmaxf(m_prev, score);
-                
-                // 使用硬件指令 exp2f
                 float alpha = exp2f(m_prev - m_new);
                 float p = exp2f(score - m_new);
-
+                
                 l_prev = __fmaf_rn(l_prev, alpha, p);
 
                 #pragma unroll
@@ -101,32 +97,40 @@ __global__ void flash_attn_ultra_kernel(
 // -----------------------------------------------------------------------
 // Pybind11 接口函数
 // -----------------------------------------------------------------------
-void solve(torch::Tensor Q, torch::Tensor K, torch::Tensor V, torch::Tensor output, 
-           int M, int N, int d) 
+void solve(torch::Tensor Q, torch::Tensor K, torch::Tensor V, torch::Tensor O, 
+           int M, int N, int d, int Br, int Bc) 
 {
-    const int Br = 16; 
-    const int Bc = 32;
+    // 显式提取指针，供宏 LAUNCH_FLASH_ATTN 使用
+    const float* d_Q = Q.data_ptr<float>();
+    const float* d_K = K.data_ptr<float>();
+    const float* d_V = V.data_ptr<float>();
+    float* d_O = O.data_ptr<float>();
 
     dim3 grid((M + Br - 1) / Br);
     dim3 block(32, Br); 
 
-    // 动态计算共享内存
-    size_t smem_size = (Bc * d + Bc * d) * sizeof(float);
+    size_t smem_size = (Bc * d * 2) * sizeof(float);
 
-    // 预缩放 scale 以便使用硬件 exp2f
-    float attention_scale = (1.0f / sqrtf((float)d)) * 1.4426950408889634074f;
+    // 预缩放常数，用于 exp2f
+    float attention_scale = (1.0f / sqrtf((float)d)) * 1.4426950408889634f;
 
-    // 启动内核，假设 d <= 128
-    flash_attn_ultra_kernel<16, 32, 128><<<grid, block, smem_size>>>(
-        Q.data_ptr<float>(), 
-        K.data_ptr<float>(), 
-        V.data_ptr<float>(), 
-        output.data_ptr<float>(), 
-        M, N, d, attention_scale
-    );
+    // 模板分发
+    if (Br == 16 && Bc == 16) {
+        LAUNCH_FLASH_ATTN(16, 16);
+    } else if (Br == 16 && Bc == 32) {
+        LAUNCH_FLASH_ATTN(16, 32);
+    } else if (Br == 32 && Bc == 16) {
+        LAUNCH_FLASH_ATTN(32, 16);
+    } else if (Br == 32 && Bc == 32) {
+        LAUNCH_FLASH_ATTN(32, 32);
+    } else {
+        // 如果没有匹配的模板，这里可以加一个默认启动或报错
+    }
 }
 
-// 模块定义
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("solve", &solve, "Flash Attention Ultra (CUDAized)");
+    m.def("solve", &solve, "Flash Attention Kernel V2 opt",
+        py::arg("Q"), py::arg("K"), py::arg("V"), py::arg("O"),
+        py::arg("M"), py::arg("N"), py::arg("d"), 
+        py::arg("Br"), py::arg("Bc"));
 }
