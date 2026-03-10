@@ -24,28 +24,50 @@
 ```
 
 ## 使用示例
-### 编译命令
+## 编译命令
 #### 编译所有算子
+
 python3 build_lab.py --j 8
 #### 编译指定算子 支持模糊匹配 支持指定多进程编译
+
 python3 build_lab.py --op 04 --j 8
 
 #### 清除编译产物
 python3 build_lab.py --clean 
 
-### 运行测试
-##### 全尺寸性能跑分: ./run.sh 04-matrix-multiplication --mode cuda --bench_mode scaling
-##### 测试指定尺寸: ./run.sh 04-matrix-multiplication --mode cuda --bench_mode tuning
-#### triton&cuda: ./run.sh 04-matrix-multiplication --mode all --bench_mode tuning
-#### nsys分析: ./run.sh 04-matrix-multiplication --profile
-#### ncu分析: ./run.sh 04-matrix-multiplication --profile --ncu
+## 运行测试
+##### 全尺寸性能跑分: 
+
+./run.sh 04-matrix-multiplication --mode cuda --bench_mode scaling
+##### 测试指定尺寸: 
+
+./run.sh 04-matrix-multiplication --mode cuda --bench_mode tuning
+#### triton&cuda: 
+
+./run.sh 04-matrix-multiplication --mode all --bench_mode tuning
+#### nsys分析: 
+
+./run.sh 04-matrix-multiplication --profile
+#### ncu分析: 
+
+./run.sh 04-matrix-multiplication --profile --ncu
+
+#### 生成不同性能曲线
+
+./run.sh 04-matrix-multiplication --mode cuda --bench_mode scaling --metric bw
+
+./run.sh 04-matrix-multiplication --mode cuda --bench_mode scaling --metric ms
+
+./run.sh 04-matrix-multiplication --mode cuda --bench_mode scaling --metric flops
+
+./run.sh 04-matrix-multiplication --mode cuda --bench_mode scaling --metric all
 
 ### GEMM Benchmark:
 #### Latency
-![alt text](operators/04-matrix-multiplication/scaling_ms_analysis.png)
+![Latency](./png/scaling_ms_analysis.png)
 
 #### Throughput
-![alt text](operators/04-matrix-multiplication/scaling_bw_analysis.png)
+![Throughput](./png/scaling_bw_analysis.png)
 
 #### Compute
-![alt text](operators/04-matrix-multiplication/scaling_flops_analysis.png)
+![Compute](./png/scaling_flops_analysis.png)
