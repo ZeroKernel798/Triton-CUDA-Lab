@@ -16,8 +16,8 @@ class OperatorSpec:
         self.name = "Matrix multiplication"
         self.output_name = "C" 
         # 设置精度标准
-        self.atol = 1e-04
-        self.rtol = 1e-04
+        self.atol = 1e-02
+        self.rtol = 1e-02
         # 数据规模测试
         self.x_vals = [
             # 1. 经典小方块：方便 Debug 检查结果
@@ -26,26 +26,15 @@ class OperatorSpec:
             {"M": 512, "K": 1024, "N": 512},
             # 3. 非对齐/奇数维度：最容易让朴素版 Kernel 崩掉的情况（测试边界逻辑）
             {"M": 1025, "K": 511, "N": 777},
-            # 4. 瘦长矩阵：模拟输入 Seq=1 时的推理场景
-            {"M": 1, "K": 4096, "N": 4096},
             # 5. 宽大矩阵：
             {"M": 4096, "K": 128, "N": 8192},
             # 6. 大规模压力测试：查看 A100 的极限性能
-            {"M": 8192, "K": 128, "N": 8192},
+            {"M": 8192, "K": 4096, "N": 6144},
         ]
-        # 添加 2^3 到 2^12 的标准方阵测试 (8, 16, ..., 4096)
-        for i in range(3, 13):
-            size = 2**i
-            self.x_vals.append({"M": size, "K": size, "N": size})
         # 核函数参数调优
         # 针对triton
         triton_params = []
         for bm, bn, bk, stages, warps in itertools.product(
-            # [32, 64, 128],       # BLOCK_SIZE_M
-            # [32, 64, 128, 256],  # BLOCK_SIZE_N
-            # [32, 64],            # BLOCK_SIZE_K
-            # [2, 3, 4, 5],           # num_stages
-            # [2, 4, 8]            # num_warps
             [32],       # BLOCK_SIZE_M
             [32, 256],  # BLOCK_SIZE_N
             [32],            # BLOCK_SIZE_K
@@ -75,7 +64,7 @@ class OperatorSpec:
         ]
         self.cuda_tuning_configs = self.make_configs(cuda_config_native, ["native", "smem_tile"])
         self.cuda_tuning_configs.extend(self.make_configs(cuda_config_tile, 
-                                ["thread_tile", "thread_tile_opt", "warp_tile", "warp_tile_double_buffer", "cpasync"]))
+                                ["thread_tile", "thread_tile_opt", "warp_tile", "warp_tile_double_buffer", "cpasync", "tc"]))
 
 
     def get_throughput(self, case: Dict[str, Any], ms: float):

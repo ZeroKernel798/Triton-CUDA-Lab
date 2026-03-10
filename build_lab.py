@@ -7,8 +7,6 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from utils.compiler import KernelEngine, clean_build
 
-# --- ✨ 核心修复：强制使用 spawn 模式启动子进程 ---
-# 必须在脚本最顶层，且在所有 CUDA 调用之前设置
 if __name__ == "__main__":
     multiprocessing.set_start_method('spawn', force=True)
 
@@ -30,7 +28,7 @@ def draw_progress(current, total, op_name, file_name, elapsed_time, bar_width=25
 
 def compile_worker(cu_file, force):
     """Worker 进程执行逻辑"""
-    # 注意：在 spawn 模式下，子进程会重新 import 相关的库
+    # 在 spawn 模式下，子进程会重新 import 相关的库
     try:
         parts = cu_file.split(os.sep)
         op_folder = parts[-3] if len(parts) >= 3 else "root"
@@ -46,7 +44,6 @@ def main():
     parser.add_argument("--op", type=str, help="模糊匹配")
     parser.add_argument("--force", action="store_true", help="强制编译")
     parser.add_argument("--clean", action="store_true", help="清理构建")
-    # ✨ 修正：支持同时识别 -j 和 --j
     parser.add_argument("-j", "--j", type=int, default=4, help="并行任务数")
     args = parser.parse_args()
 

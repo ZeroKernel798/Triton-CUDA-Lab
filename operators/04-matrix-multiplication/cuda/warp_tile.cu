@@ -16,14 +16,14 @@ __global__ void matrix_mul_kernel_warp_tile(const float* __restrict__ A, const f
     float* sA = s_mem;                
     float* sB = s_mem + BK * BM;      
 
-    // 1. 线程索引获取
+    // 线程索引获取
     int num_threads = blockDim.x * blockDim.y;
     int tid = threadIdx.y * blockDim.x + threadIdx.x;
 
     int warp_id = tid / 32;
     int lane_id = tid % 32;
 
-    // 修复 1：动态支持不同的 BN/BM 分块，不再写死 2x4 布局
+    // 动态支持不同的 BN/BM 分块，不再写死 2x4 布局
     // 每个 Warp 在横向负责 32 个元素 (因为 lane_col 最大是 3, 3*8 + 8 = 32)
     int warp_col = warp_id % (BN / 32); 
     int warp_row = warp_id / (BN / 32); 
@@ -44,7 +44,7 @@ __global__ void matrix_mul_kernel_warp_tile(const float* __restrict__ A, const f
 
     for (int k_ptr = 0; k_ptr < K; k_ptr += BK) {
         
-        // --- 搬运 A (Global -> Shared) 补零版 ---
+        // 搬运 A (Global -> Shared) 
         #pragma unroll
         for (int p = 0; p < (BM * BK + num_threads * 4 - 1) / (num_threads * 4); p++) {
             int idx = (tid + p * num_threads) * 4;
@@ -59,7 +59,7 @@ __global__ void matrix_mul_kernel_warp_tile(const float* __restrict__ A, const f
                     sA[GET_S_INDEX(a_c+2, a_r, BM)] = tmp.z;
                     sA[GET_S_INDEX(a_c+3, a_r, BM)] = tmp.w;
                 } else {
-                    // 💡 修复 2：越界强制写 0 覆盖脏数据
+                    // 越界强制写 0 覆盖脏数据
                     for(int i=0; i<4; i++) {
                         int r = a_r; 
                         int c = a_c + i;
@@ -75,7 +75,7 @@ __global__ void matrix_mul_kernel_warp_tile(const float* __restrict__ A, const f
             }
         }
 
-        // --- 搬运 B (Global -> Shared) 补零版 ---
+        // 搬运 B (Global -> Shared) 
         #pragma unroll
         for (int p = 0; p < (BK * BN + num_threads * 4 - 1) / (num_threads * 4); p++) {
             int idx = (tid + p * num_threads) * 4;
@@ -86,7 +86,7 @@ __global__ void matrix_mul_kernel_warp_tile(const float* __restrict__ A, const f
                 if (k_ptr + b_r < K && (col_start + b_c + 3) < N && IS_ALIGNED_16(g_ptr) && (b_c % 4 == 0)) {
                     reinterpret_cast<float4*>(&sB[GET_S_INDEX(b_r, b_c, BN)])[0] = reinterpret_cast<const float4*>(g_ptr)[0];
                 } else {
-                    // 💡 修复 3：越界强制写 0 覆盖脏数据
+                    // 越界强制写 0 覆盖脏数据
                     for(int i=0; i<4; i++) {
                         int r = b_r; 
                         int c = b_c + i;
@@ -103,7 +103,7 @@ __global__ void matrix_mul_kernel_warp_tile(const float* __restrict__ A, const f
         }
         __syncthreads();
 
-        // --- 计算阶段 ---
+        // 计算阶段 
         #pragma unroll
         for (int kk = 0; kk < BK; kk++) {
             int sA_base = warp_row * 64 + lane_row * 8; 
@@ -127,7 +127,7 @@ __global__ void matrix_mul_kernel_warp_tile(const float* __restrict__ A, const f
         __syncthreads();
     }
 
-    // --- 写回阶段 ---
+    // 写回阶段 
     int final_r = row_start + warp_row * 64 + lane_row * 8;
     int final_c = col_start + warp_col * 32 + lane_col * 8;
 
@@ -153,7 +153,7 @@ void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C,
     auto d_B = B.data_ptr<float>(); 
     auto d_C = C.data_ptr<float>();
     
-    // 修复 4：动态计算线程数。每个线程算 8x8=64 个元素
+    // 动态计算线程数。每个线程算 8x8=64 个元素
     // 这样当传入 128x64 时，线程数自动变为 128，而不是写死的 256
     int total_threads = (bx * by) / 64;
     dim3 threads(total_threads); 

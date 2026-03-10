@@ -4,14 +4,12 @@
 #include <float.h>
 #include <math.h>
 
-// 修正宏：确保参数名与 solve 函数内部定义的变量名一致
+// 确保参数名与 solve 函数内部定义的变量名一致
 #define LAUNCH_FLASH_ATTN(BR, BC) \
     flash_attn_ultra_kernel<BR, BC, 128><<<grid, block, smem_size>>>( \
         d_Q, d_K, d_V, d_O, M, N, d, attention_scale);
 
-// -----------------------------------------------------------------------
-// Flash Attention Ultra Kernel
-// -----------------------------------------------------------------------
+
 template<int Br, int Bc, int max_d>
 __global__ void flash_attn_ultra_kernel(
     const float* Q, const float* K, const float* V, float* O,

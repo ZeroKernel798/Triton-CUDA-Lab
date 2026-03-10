@@ -51,6 +51,18 @@ class OperatorSpec:
         total_elements = n * n
         return (total_elements * 4 * 3) / 1e9 / (ms / 1000)
 
+    def get_flops(self, case: Dict[str, Any], ms: float):
+        if ms == 0 or ms is None: return 0
+        n = case.get("N", self.perf_input)
+        
+        # 矩阵加法：每个位置执行一次加法，总共 N^2 次操作
+        total_ops = float(n * n)
+        
+        # TFLOPS = total_ops / (秒 * 1e12)
+        # ms 转秒需除以 1000，简化公式为：total_ops / (ms * 1e9)
+        tflops = total_ops / (ms * 1e9)
+        return tflops
+
     def reference_impl(self, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, N: int, **kwargs):
         assert A.shape == (N, N)
         assert B.shape == (N, N)

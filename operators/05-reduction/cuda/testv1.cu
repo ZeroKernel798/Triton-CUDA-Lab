@@ -72,5 +72,10 @@ void solve(torch::Tensor input, torch::Tensor output, int N, int block_size) {
 
 // 模块定义
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("solve", &solve, "Grid-stride Reduction with Warp Shuffle (CUDA)");
+    m.def("solve", &solve, "Grid-stride Reduction with Warp Shuffle (CUDA)",
+          py::arg("input"),      // 对应 torch::Tensor input
+          py::arg("output"),     // 对应 torch::Tensor output
+          py::arg("N"),          // 对应 int N
+          py::arg("block_size")  // 对应 int block_size
+    );
 }

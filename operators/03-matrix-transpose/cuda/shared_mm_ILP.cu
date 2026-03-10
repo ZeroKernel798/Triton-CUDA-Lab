@@ -1,13 +1,11 @@
 #include <torch/extension.h>
 #include <cuda_runtime.h>
 
-// 模板参数只留 BLOCK_ROWS (粗化程度)
 template <int BLOCK_ROWS>
 __global__ void matrix_transpose_kernel(const float* __restrict__ input, 
                                        float* __restrict__ output, 
                                        int rows, int cols) 
 {
-    // 战场永远固定为 32x32，这是性能的基石
     const int TILE_DIM = 32;
     __shared__ float tile[TILE_DIM][TILE_DIM + 1];
 
@@ -17,7 +15,7 @@ __global__ void matrix_transpose_kernel(const float* __restrict__ input,
     int x = blockIdx.x * TILE_DIM + tx;
     int y = blockIdx.y * TILE_DIM + ty;
 
-    // --- 1. 读取阶段 ---
+    // 读取阶段
     #pragma unroll
     for (int i = 0; i < TILE_DIM; i += BLOCK_ROWS) {
         if (x < cols && (y + i) < rows) {
@@ -27,7 +25,7 @@ __global__ void matrix_transpose_kernel(const float* __restrict__ input,
 
     __syncthreads();
 
-    // --- 2. 写入阶段 ---
+    // 写入阶段 
     int x_new = blockIdx.y * TILE_DIM + tx;
     int y_new = blockIdx.x * TILE_DIM + ty;
 
@@ -41,7 +39,7 @@ __global__ void matrix_transpose_kernel(const float* __restrict__ input,
 
 // 修正后的 solve 函数
 void solve(torch::Tensor input, torch::Tensor output, int rows, int cols, int bx, int by) {
-    // 强制 bx 必须为 32，因为我们的 Tile 是 32 宽的
+    // 强制 bx 必须为 32
     const int TILE_DIM = 32;
 
     const float* d_input = input.data_ptr<float>();

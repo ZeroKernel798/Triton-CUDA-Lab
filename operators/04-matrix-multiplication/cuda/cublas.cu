@@ -8,8 +8,6 @@
 
 void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int M, int K) {
     // cuBLAS 默认是 列优先 (Column Major)，而 C++ Tensor 是 行优先 (Row Major)
-    // 技巧：计算 C = A * B (Row Major) 等价于计算 C^T = B^T * A^T (Column Major)
-    // 所以传参顺序会变成 B, A
     
     cublasHandle_t handle = at::cuda::getCurrentCUDABlasHandle();
     
@@ -46,7 +44,6 @@ void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int M, int 
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    // 注意：cuBLAS 版本不需要 bx, by 参数，因为内部自动调优
     m.def("solve", &solve, "cuBLAS Matrix Multiplication",
           py::arg("A"), py::arg("B"), py::arg("C"), 
           py::arg("N"), py::arg("M"), py::arg("K"));

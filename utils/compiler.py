@@ -42,7 +42,7 @@ class KernelEngine:
     @staticmethod
     def setup_cuda(cu_file, force_recompile=False):
         """编译单个 CUDA 算子"""
-        # --- 策略：每个进程只管一个文件，强制 Ninja 单线程防止资源踩踏 ---
+        # 每个进程只管一个文件，强制 Ninja 单线程防止资源踩踏
         os.environ["MAX_JOBS"] = "1" 
         arch_sm, arch_list, major_v, minor_v = KernelEngine.get_gpu_info()
         os.environ["TORCH_CUDA_ARCH_LIST"] = arch_list
@@ -59,7 +59,6 @@ class KernelEngine:
         if build_dir not in sys.path:
             sys.path.append(build_dir)
 
-        # --- 自动破锁逻辑：如果锁文件存在且超过 15 秒没动静，视为僵尸锁 ---
         for lock_name in ["lock", ".ninja_lock"]:
             l_path = os.path.join(build_dir, lock_name)
             if os.path.exists(l_path):
@@ -67,7 +66,7 @@ class KernelEngine:
                     try: os.remove(l_path)
                     except: pass
 
-        # --- MD5 增量编译检查 ---
+        # MD5 增量编译检查
         cu_md5 = KernelEngine.get_md5(abs_path)
         md5_file = os.path.join(build_dir, "source.md5")
         

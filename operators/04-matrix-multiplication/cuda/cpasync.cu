@@ -1,7 +1,7 @@
 #include <cuda_runtime.h>
 #include <torch/extension.h>
 #include <string>
-#include <cuda_pipeline_primitives.h> // 🚀 引入 Ampere 异步拷贝 API
+#include <cuda_pipeline_primitives.h> 
 
 #define IS_ALIGNED_16(ptr) ((reinterpret_cast<size_t>(ptr) & 15) == 0)
 #define GET_S_INDEX(row, col, width) (((row) * (width)) + (((col) / 4 ^ (row)) * 4) + ((col) % 4))
@@ -37,17 +37,13 @@ __global__ void matrix_mul_kernel_warp_tile_cp_async(const float* __restrict__ A
     int write_idx = 0;
     int read_idx  = 0;
 
-    // 💡 只有 A 矩阵需要暂存寄存器用于转置！B 矩阵的暂存器被干掉了！
     constexpr int FETCH_A = (BM * BK + NUM_THREADS * 4 - 1) / (NUM_THREADS * 4);
     constexpr int FETCH_B = (BK * BN + NUM_THREADS * 4 - 1) / (NUM_THREADS * 4);
     float4 ldg_A[FETCH_A];
 
-    // ===================================================================
-    // 🚀 Prologue: A 走寄存器，B 走直通车
-    // ===================================================================
     int k_ptr = 0;
     if (k_ptr < K) {
-        // --- A 矩阵 (必须通过寄存器完成转置) ---
+        // A 矩阵 (必须通过寄存器完成转置) 
         #pragma unroll
         for (int p = 0; p < FETCH_A; p++) {
             int idx = (tid + p * NUM_THREADS) * 4;
@@ -69,7 +65,7 @@ __global__ void matrix_mul_kernel_warp_tile_cp_async(const float* __restrict__ A
             }
         }
         
-        // --- B 矩阵 (直通车开启) ---
+        // B 矩阵 
         #pragma unroll
         for (int p = 0; p < FETCH_B; p++) {
             int idx = (tid + p * NUM_THREADS) * 4;
@@ -79,7 +75,6 @@ __global__ void matrix_mul_kernel_warp_tile_cp_async(const float* __restrict__ A
                 float* s_ptr = &sB[write_idx * (BK * BN) + GET_S_INDEX(b_r, b_c, BN)];
 
                 if (k_ptr + b_r < K && col_start + b_c + 3 < N && IS_ALIGNED_16(g_ptr)) {
-                    // 🚀 核心魔法：异步提交 16 字节直通拷贝
                     __pipeline_memcpy_async(s_ptr, g_ptr, 16);
                 } else {
                     // 越界用普通存取
@@ -105,13 +100,11 @@ __global__ void matrix_mul_kernel_warp_tile_cp_async(const float* __restrict__ A
     rB[0][0] = reinterpret_cast<float4*>(&sB[read_idx * (BK * BN) + GET_S_INDEX(0, sB_base + 0, BN)])[0];
     rB[0][1] = reinterpret_cast<float4*>(&sB[read_idx * (BK * BN) + GET_S_INDEX(0, sB_base + 4, BN)])[0];
 
-    // ===================================================================
-    // 🚀 Main Pipeline
-    // ===================================================================
+
     for (k_ptr = BK; k_ptr < K; k_ptr += BK) {
         write_idx ^= 1; 
 
-        // 1. 发射 B 矩阵直通车，同时将 A 存入临时寄存器
+        // 发射 B 矩阵直通车，同时将 A 存入临时寄存器
         #pragma unroll
         for (int p = 0; p < FETCH_B; p++) {
             int idx = (tid + p * NUM_THREADS) * 4;
@@ -146,9 +139,9 @@ __global__ void matrix_mul_kernel_warp_tile_cp_async(const float* __restrict__ A
             }
         }
         
-        __pipeline_commit(); // B 矩阵拷贝订单提交！
+        __pipeline_commit(); // B 矩阵拷贝订单提交
 
-        // 2. 利用寄存器数据，边算边掩盖直通车的延迟
+        // 利用寄存器数据，边算边掩盖直通车的延迟
         #pragma unroll
         for (int kk = 0; kk < BK; kk++) {
             int load_reg_idx = (kk + 1) % 2; 
@@ -172,7 +165,7 @@ __global__ void matrix_mul_kernel_warp_tile_cp_async(const float* __restrict__ A
             #undef OP
         }
 
-        // 3. 计算完了，把暂存在寄存器里的 A 矩阵慢悠悠地转置写回 Shared
+        // 计算完了，把暂存在寄存器里的 A 矩阵转置写回 Shared
         #pragma unroll
         for (int p = 0; p < FETCH_A; p++) {
             int idx = (tid + p * NUM_THREADS) * 4;
@@ -195,9 +188,6 @@ __global__ void matrix_mul_kernel_warp_tile_cp_async(const float* __restrict__ A
         rB[0][1] = reinterpret_cast<float4*>(&sB[read_idx * (BK * BN) + GET_S_INDEX(0, sB_base + 4, BN)])[0];
     }
 
-    // ===================================================================
-    // 🚀 Epilogue (不变)
-    // ===================================================================
     #pragma unroll
     for (int kk = 0; kk < BK; kk++) {
         int load_reg_idx = (kk + 1) % 2; 

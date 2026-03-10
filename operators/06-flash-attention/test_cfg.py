@@ -16,8 +16,6 @@ class OperatorSpec:
         self.atol = 1e-02 
         self.rtol = 1e-02
 
-        # 1. 设置输入数据规模 (M, N, d)
-        # M: Query SeqLen, N: KV SeqLen, d: Head Dim
         self.x_vals = [
             {"M": 128, "N": 128, "d": 64},   # 基础 Debug
             {"M": 512, "N": 512, "d": 64},   # 标准尺寸
@@ -26,8 +24,6 @@ class OperatorSpec:
             {"M": 4096, "N": 4096, "d": 64},  # 极限测试
         ]
 
-        # 2. 设置 CUDA 可调优参数 (Br, Bc)
-        # 注意：Br * d + Bc * d 等需要符合 Shared Memory 限制
         cuda_params = []
         for br, bc in itertools.product(
             [16, 32], # Br: Block Row (Q 分块)
@@ -38,9 +34,8 @@ class OperatorSpec:
                 "Bc": bc
             })
         
-        # 绑定版本，假设我们有多个实现版本
         self.cuda_tuning_configs = self.make_configs(cuda_params, 
-                            ["flashattentionv1", "flashattentionv2_opt", "flashattentionv2_tc"])
+                            ["flashattentionv1", "flashattentionv2_opt"])
 
     def get_throughput(self, case: Dict[str, Any], ms: float):
         """
@@ -62,8 +57,6 @@ class OperatorSpec:
         """计算 TFLOPS: Attention 的计算量约为 2 * M * N * (d + d)"""
         if ms == 0: return 0
         m, n, d = case["M"], case["N"], case["d"]
-        # 1. QK^T: M * N * d multiplications + additions
-        # 2. Softmax * V: M * N * d multiplications + additions
         # 总计约 4 * M * N * d
         total_ops = 4.0 * m * n * d
         return total_ops / (ms * 1e9)

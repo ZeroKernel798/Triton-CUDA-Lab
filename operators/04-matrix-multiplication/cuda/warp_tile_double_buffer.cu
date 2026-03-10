@@ -9,12 +9,12 @@ template<int BM, int BN, int BK>
 __global__ void matrix_mul_kernel_warp_tile_pipelined(const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C, 
                                                      int N, int M, int K) 
 {
-    // 💡 1. Shared Memory 翻倍，分为 Buffer 0 和 Buffer 1
+    // shared Memory 翻倍，分为 Buffer 0 和 Buffer 1
     extern __shared__ float s_mem[];
     float* sA = s_mem;                                // 大小: 2 * BK * BM
     float* sB = s_mem + 2 * BK * BM;                  // 大小: 2 * BK * BN
 
-    // 💡 2. 编译期计算线程数，用于分配定长寄存器数组
+    // 编译期计算线程数，用于分配定长寄存器数组
     constexpr int NUM_THREADS = (BM * BN) / 64;
     int tid = threadIdx.y * blockDim.x + threadIdx.x;
 
@@ -39,15 +39,12 @@ __global__ void matrix_mul_kernel_warp_tile_pipelined(const float* __restrict__ 
     int write_idx = 0;
     int read_idx  = 0;
 
-    // 💡 用于 Global -> Shared 的暂存寄存器 (隐藏 Load 延迟)
+    // 用于 Global -> Shared 的暂存寄存器 (隐藏 Load 延迟)
     constexpr int FETCH_A = (BM * BK + NUM_THREADS * 4 - 1) / (NUM_THREADS * 4);
     constexpr int FETCH_B = (BK * BN + NUM_THREADS * 4 - 1) / (NUM_THREADS * 4);
     float4 ldg_A[FETCH_A];
     float4 ldg_B[FETCH_B];
 
-    // ===================================================================
-    // 🚀 Prologue (开场): 加载第 0 个 Tile 到 Buffer 0
-    // ===================================================================
     int k_ptr = 0;
     if (k_ptr < K) {
         #pragma unroll
@@ -90,7 +87,7 @@ __global__ void matrix_mul_kernel_warp_tile_pipelined(const float* __restrict__ 
         __syncthreads();
     }
 
-    // 💡 寄存器级别的 Double Buffer，用于隐藏 Shared -> Register 的延迟
+    // 寄存器级别的 Double Buffer，用于隐藏 Shared -> Register 的延迟
     float4 rA[2][2], rB[2][2]; 
     int sA_base = warp_row * 64 + lane_row * 8; 
     int sB_base = warp_col * 32 + lane_col * 8;
@@ -101,13 +98,11 @@ __global__ void matrix_mul_kernel_warp_tile_pipelined(const float* __restrict__ 
     rB[0][0] = reinterpret_cast<float4*>(&sB[read_idx * (BK * BN) + GET_S_INDEX(0, sB_base + 0, BN)])[0];
     rB[0][1] = reinterpret_cast<float4*>(&sB[read_idx * (BK * BN) + GET_S_INDEX(0, sB_base + 4, BN)])[0];
 
-    // ===================================================================
-    // 🚀 Main Pipeline: 边算当前 Tile，边加载下一个 Tile
-    // ===================================================================
+
     for (k_ptr = BK; k_ptr < K; k_ptr += BK) {
         write_idx ^= 1; // 切换写入目标到下一个 Buffer
 
-        // 步骤 1：从 Global Memory 异步读取下一个 Tile 到寄存器 (ldg_A, ldg_B)
+        // 从 Global Memory 异步读取下一个 Tile 到寄存器 (ldg_A, ldg_B)
         // 这一步开始发出全局访存请求
         #pragma unroll
         for (int p = 0; p < FETCH_A; p++) {
@@ -142,7 +137,7 @@ __global__ void matrix_mul_kernel_warp_tile_pipelined(const float* __restrict__ 
             }
         }
 
-        // 步骤 2：在全局访存飞行的同时，用寄存器双缓冲执行当前 Tile 的计算
+        // 在全局访存飞行的同时，用寄存器双缓冲执行当前 Tile 的计算
         #pragma unroll
         for (int kk = 0; kk < BK; kk++) {
             int load_reg_idx = (kk + 1) % 2; 
@@ -168,7 +163,7 @@ __global__ void matrix_mul_kernel_warp_tile_pipelined(const float* __restrict__ 
             #undef OP
         }
 
-        // 步骤 3：当前 Tile 计算完毕，将寄存器中已拉取的下一个 Tile 写入目标 Buffer
+        // 当前 Tile 计算完毕，将寄存器中已拉取的下一个 Tile 写入目标 Buffer
         #pragma unroll
         for (int p = 0; p < FETCH_A; p++) {
             int idx = (tid + p * NUM_THREADS) * 4;
@@ -199,9 +194,6 @@ __global__ void matrix_mul_kernel_warp_tile_pipelined(const float* __restrict__ 
         rB[0][1] = reinterpret_cast<float4*>(&sB[read_idx * (BK * BN) + GET_S_INDEX(0, sB_base + 4, BN)])[0];
     }
 
-    // ===================================================================
-    // 🚀 Epilogue (收尾): 计算最后一个 Tile
-    // ===================================================================
     #pragma unroll
     for (int kk = 0; kk < BK; kk++) {
         int load_reg_idx = (kk + 1) % 2; 
@@ -225,7 +217,7 @@ __global__ void matrix_mul_kernel_warp_tile_pipelined(const float* __restrict__ 
         #undef OP
     }
 
-    // --- 写回阶段 (原封不动) ---
+    // 写回阶段 (原封不动)
     int final_r = row_start + warp_row * 64 + lane_row * 8;
     int final_c = col_start + warp_col * 32 + lane_col * 8;
 
@@ -256,7 +248,7 @@ void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C,
     dim3 threads(total_threads); 
     dim3 blocks((N + bx - 1) / bx, (M + by - 1) / by);
     
-    // 💡 必须申请双倍的 Shared Memory！
+    // 必须申请双倍的 Shared Memory
     size_t shared_mem_size = 2 * (bk * bx + bk * by) * sizeof(float);
 
     if (bx == 128 && by == 128 && bk == 8) {

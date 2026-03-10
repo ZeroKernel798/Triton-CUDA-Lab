@@ -56,6 +56,11 @@ class OperatorSpec:
         seconds = ms / 1000
         return total_gb / seconds
 
+    def get_flops(self, case: Dict[str, Any], ms: float):
+        # 转置只是改变了元素的位置，没有任何数学运算
+        # 虽然在某些实现中可能有索引计算，但不计入 FLOPs
+        return 0.0
+
     def reference_impl(self, input: torch.Tensor, output: torch.Tensor, rows: int, cols: int, **kwargs):
         assert input.shape == (rows, cols)
         assert output.shape == (cols, rows)

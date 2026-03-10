@@ -31,7 +31,6 @@ if [[ " $ARGS " =~ " --profile " ]]; then
     if [[ " $ARGS " =~ " --ncu " ]]; then
         echo "🧬 [NCU] 启动 Nsight Compute (硬件指标/Roofline)..."
         # ncu 通常需要 sudo 权限获取硬件计数器
-        # -E 保证环境变量(如虚拟环境路径)不丢失
         sudo -E $(which ncu) --profile-from-start off \
             --target-processes all \
             --force-overwrite \

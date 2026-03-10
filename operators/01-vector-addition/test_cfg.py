@@ -10,21 +10,20 @@ class OperatorSpec:
         return [{**p, "version": v} for v in versions for p in params]
     
     def __init__(self):
-        # 1. 基础信息设置
+        # 基础信息设置
         self.name = "Vector Addition"
         self.output_name = "C"
         self.atol, self.rtol = 1e-05, 1e-05
         self.perf_input = 1024 * 1024 * 16
         self.x_vals = [{"N": 2**i} for i in range(12, 25)]
 
-        # 2. CUDA 参数生产线
-        # 先定义纯粹的硬件参数（不带 version）
+        # CUDA 参数生产线
         cuda_1d_params = [{"block_size": bs} for bs in [32, 128, 256, 512, 1024]]
         
         # 直接批量生成：native 和 float4 共享这套参数
         self.cuda_tuning_configs = self.make_configs(cuda_1d_params, ["native", "float4"])
 
-        # 3. Triton 参数生产线
+        # Triton 参数生产线
         triton_params = [
             {"BLOCK_SIZE": 32, "num_warps": 2},
             {"BLOCK_SIZE": 64, "num_warps": 4},
@@ -41,6 +40,19 @@ class OperatorSpec:
         if ms is None or ms == 0: return 0
         n = case.get("N", self.perf_input)
         return (n * 4 * 3) / 1e9 / (ms / 1000)
+    
+    def get_flops(self, case: Dict[str, Any], ms: float):
+        if ms == 0 or ms is None: return 0
+        n = case.get("N", self.perf_input)
+        
+        # 向量加法中，每个元素仅执行 1 次加法操作
+        total_ops = float(n)
+        
+        # TFLOPS = Total Ops / (Time in seconds * 1e12)
+        # 由于 ms 是毫秒，转为秒需要 / 1000
+        # 简化后公式：tflops = total_ops / (ms * 1e9)
+        tflops = total_ops / (ms * 1e9)
+        return tflops
 
     # pytorch标准
     def reference_impl(self, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, N: int, **kwargs):

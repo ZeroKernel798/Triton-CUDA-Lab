@@ -16,7 +16,7 @@ __global__ void matrix_transpose_kernel(const float* input, float* output, int r
 }
 
 void solve(torch::Tensor input, torch::Tensor output, int rows, int cols, int bx, int by) {
-    // 1. 必要的安全检查（这是框架的修养）
+    // 必要的安全检查
     TORCH_CHECK(input.is_cuda(), "Input must be a CUDA tensor");
     TORCH_CHECK(output.is_cuda(), "Output must be a CUDA tensor");
     TORCH_CHECK(input.is_contiguous(), "Input must be contiguous");

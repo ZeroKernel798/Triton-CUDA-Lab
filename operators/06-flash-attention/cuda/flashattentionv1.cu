@@ -3,7 +3,7 @@
 #include <float.h>
 #include <cmath>
 
-// 修正 1: 确保宏内部引用的变量名与 solve 函数的参数名一致
+// 确保宏内部引用的变量名与 solve 函数的参数名一致
 #define LAUNCH_FLASH_ATTN(BR, BC) \
     flash_attn_v1_kernel<BR, BC, 128><<<grid, block, smem_size>>>( \
         d_Q, d_K, d_V, d_O, d_L, d_M, M, N, d, scale);
@@ -123,7 +123,7 @@ void solve(torch::Tensor Q, torch::Tensor K, torch::Tensor V, torch::Tensor O,
     else if (Br == 32 && Bc == 32) { LAUNCH_FLASH_ATTN(32, 32); }
 }
 
-// 修正 2: 显式声明 py 别名
+// 显式声明 py 别名
 namespace py = pybind11;
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

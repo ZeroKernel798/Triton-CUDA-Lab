@@ -13,14 +13,14 @@ def run_lab():
     parser.add_argument("--epoch", type=int, default=1000, help="测试迭代次数")
     parser.add_argument("--warmup", type=int, default=10, help="预热迭代次数")
     parser.add_argument("--bench_mode", choices=['scaling', 'tuning'], default='scaling')
-    parser.add_argument("--metric", choices=['bw', 'flops', 'both'], default='bw', 
-                        help="绘图指标: 带宽(bw), 算力(flops), 或全部(both)")
-    # 新增: Profiling 开关
+    parser.add_argument("--metric", choices=['bw', 'flops', 'ms', 'all'], default='all', 
+                    help="绘图指标: bw, flops, ms (时间), 或 all (全部)")
+    # Profiling 开关
     parser.add_argument("--profile", action="store_true", help="开启采样模式")
     parser.add_argument("--ncu", action="store_true", help="切换至 ncu 模式 (需配合 --profile)")
     args = parser.parse_args()
 
-    # 1. 加载算子配置文件
+    # 加载算子配置文件
     cfg_path = os.path.join(os.getcwd(), 'operators', args.op, 'test_cfg.py')
     if not os.path.exists(cfg_path):
         print(f"❌ 找不到测试配置文件: {cfg_path}"); return
@@ -30,7 +30,7 @@ def run_lab():
     spec_lib.loader.exec_module(test_cfg)
     spec = test_cfg.OperatorSpec()
     
-    # 2. 初始化环境
+    # 初始化环境
     logger = LabLogger()
     runner = BenchmarkRunner(spec, args, logger)
 
@@ -41,7 +41,7 @@ def run_lab():
         print("📸 PROFILE 模式启动: 仅进行功能校验与单次硬件采样")
         print("!"*60)
 
-    # 3. 运行 CUDA 算子
+    # 运行 CUDA 算子
     if args.mode in ['all', 'cuda']:
         # 寻找目录下所有的 .cu 文件
         for cu in sorted(glob.glob(f"operators/{args.op}/cuda/*.cu")):
@@ -54,8 +54,8 @@ def run_lab():
             except Exception as e: 
                 print(f"❌ 运行错误 [{file_name}]: {e}")
 
-    # 4. 运行 Triton 算子
-    # 注意：profile 模式通常针对 CUDA，但这里逻辑也支持 Triton 的 nsys 采样
+    # 运行 Triton 算子
+    # profile 模式通常针对 CUDA，但这里逻辑也支持 Triton 的 nsys 采样
     if args.mode in ['all', 'triton']:
         for py_file in sorted(glob.glob(f"operators/{args.op}/triton/*.py")):
             file_name = os.path.basename(py_file)
@@ -68,14 +68,22 @@ def run_lab():
             except Exception as e: 
                 print(f"❌ 运行错误 [{file_name}]: {e}")
 
-    # 5. 结果处理
+    # 结果处理
     if args.profile:
-        print(f"\n✨ Profiling 任务结束。报告文件建议保存至 build/reports/")
+        print(f"\n✨ Profiling 任务结束。")
     else:
-        # 仅在非 Profile 模式下生成图表
-        metrics_to_plot = ['bw', 'flops'] if args.metric == 'both' else [args.metric]
+        base_case = spec.generate_performance_test({})
+        shape_str = "x".join([str(v) for v in base_case.values() if isinstance(v, (int, float))])
+
+        # 💡 确定需要绘制的指标列表
+        if args.metric == 'all':
+            metrics_to_plot = ['bw', 'flops', 'ms']
+        else:
+            metrics_to_plot = [args.metric]
+        
         for m in metrics_to_plot:
-            logger.plot(args.op, args.bench_mode, metric_type=m)
+            logger.plot(args.op, args.bench_mode, metric_type=m, current_shape=shape_str)
+            
 
 if __name__ == "__main__":
     run_lab()
