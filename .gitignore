@@ -1,0 +1,10 @@
+__pycache__/
+*.so
+*.py[cod]
+build/
+.vscode/
+.DS_Store
+operators/*/*.png
+plots/
+reports/
+**/__pycache__/
