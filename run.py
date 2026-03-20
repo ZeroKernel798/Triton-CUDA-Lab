@@ -1,5 +1,8 @@
 import argparse
 from utils import runner
+import logging
+
+logging.getLogger("torch._inductor.select_algorithm").setLevel(logging.ERROR)
 
 def main():
     parser = argparse.ArgumentParser(description="Triton-CUDA-Lab V2")

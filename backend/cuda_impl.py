@@ -2,7 +2,7 @@ from core.executor import BaseExecutor
 from utils.compiler import compiler
 from triton.testing import do_bench 
 
-class CudaExecutor(BaseExecutor):
+class CudaExecutor(BaseExecutor):        
     def compile(self):
         # 从 spec 获取需要注入的宏
         macros = self.spec.get_macros(self.config)

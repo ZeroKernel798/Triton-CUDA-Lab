@@ -1,60 +1,62 @@
-#include <cuda_runtime.h>
 #include <torch/extension.h>
+#include <cuda_runtime.h>
 
+// 1. 宏定义，InferX 框架会在编译时通过 -DBLOCK_SIZE=xxx 注入
 #ifndef BLOCK_SIZE
 #define BLOCK_SIZE 256
 #endif
 
-__global__ void vector_add_float4_kernel(const float* A, const float* B, float* C, int Ne) {
-    // blockDim.x 运行时等于 BLOCK_SIZE
-    int tid = blockDim.x * blockIdx.x + threadIdx.x;
-    int offset = tid * 4;
+__global__ void vector_add_float4_kernel(const float* __restrict__ A, 
+                                         const float* __restrict__ B, 
+                                         float* __restrict__ C, 
+                                         int64_t N) {
+    // 🌟 使用宏 BLOCK_SIZE 代替 blockDim.x，方便编译器做循环展开和寄存器预分配
+    int64_t tid = (int64_t)blockIdx.x * BLOCK_SIZE + threadIdx.x;
+    
+    // 每个线程处理 4 个连续的 float
+    int64_t offset = tid * 4;
 
-    if (offset + 3 < Ne) {
-        // 利用 tid 索引 float4 指针，实现 128-bit 向量化加载/存储
-        // 
-        const float4* Av_ptr = reinterpret_cast<const float4*>(A);
-        const float4* Bv_ptr = reinterpret_cast<const float4*>(B);
-        float4* Cv_ptr = reinterpret_cast<float4*>(C);
+    // 2. 向量化处理部分 (128-bit Load/Store)
+    if (offset + 3 < N) {
+        // 使用内置 float4 类型实现合并访存
+        float4 a = *reinterpret_cast<const float4*>(&A[offset]);
+        float4 b = *reinterpret_cast<const float4*>(&B[offset]);
+        float4 res;
 
-        // 向量化读取
-        float4 Av = Av_ptr[tid];
-        float4 Bv = Bv_ptr[tid];
-        
-        float4 Cv;
-        Cv.x = Av.x + Bv.x;
-        Cv.y = Av.y + Bv.y;
-        Cv.z = Av.z + Bv.z;
-        Cv.w = Av.w + Bv.w;
+        res.x = a.x + b.x;
+        res.y = a.y + b.y;
+        res.z = a.z + b.z;
+        res.w = a.w + b.w;
 
-        // 向量化写入
-        Cv_ptr[tid] = Cv;
+        *reinterpret_cast<float4*>(&C[offset]) = res;
     } 
-    else if (offset < Ne) {
-        // 边界处理：处理末尾不足 4 个的部分
-        for (int i = offset; i < Ne; i++) {
+    // 3. 边界残余处理 (Tail Handling)
+    // 只有最后一组活跃线程中的部分线程会进入这里
+    else if (offset < N) {
+        for (int64_t i = offset; i < N; ++i) {
             C[i] = A[i] + B[i];
         }
     }
 }
 
-
-void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N) {
-    int Ne = N * N;
+void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int64_t N) {
+    // 线程块大小直接写死为宏常量
+    const int threadsPerBlock = BLOCK_SIZE; 
     
-    const float* d_A = A.data_ptr<float>();
-    const float* d_B = B.data_ptr<float>();
-    float* d_C = C.data_ptr<float>();
+    // 计算总共需要多少个“向量化步长”
+    // 计算公式: ceil(N / 4)
+    int64_t n_vector = (N + 3) / 4; 
+    int64_t blocksPerGrid = (n_vector + threadsPerBlock - 1) / threadsPerBlock;
 
-    // 使用编译时确定的 BLOCK_SIZE
-    int n_vec = (Ne + 3) / 4; 
-    int blocksPerGrid = (n_vec + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
-    vector_add_float4_kernel<<<blocksPerGrid, BLOCK_SIZE>>>(d_A, d_B, d_C, Ne);
+    vector_add_float4_kernel<<<blocksPerGrid, threadsPerBlock>>>(
+        A.data_ptr<float>(),
+        B.data_ptr<float>(),
+        C.data_ptr<float>(),
+        N
+    );
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    namespace py = pybind11;
-    m.def("solve", &solve, "1D Flattened Vectorized Matrix Addition",
+    m.def("solve", &solve, "Vector Addition float4 (Macro Optimized)",
           py::arg("A"), py::arg("B"), py::arg("C"), py::arg("N"));
 }
