@@ -5,18 +5,18 @@ from core.spec import BaseOperatorSpec
 class VectorAdditionFP32Spec(BaseOperatorSpec):
     def __init__(self):
         super().__init__()
-        # 1. 基础元数据
+        # 基础元数据
         self.name = "Vector Addition FP32"
         self.op_name = "VectorAddition_FP32" # 对应 Executor 索引
         self.output_name = "C"
         self.atol, self.rtol = 1e-05, 1e-05
         self.dtype = torch.float32
         
-        # 2. 测试规模定义 (从 4K 元素到 16M 元素)
+        # 测试规模定义 (从 4K 元素到 16M 元素)
         self.perf_input = 1024 * 1024 * 16
         self.x_vals = [{"N": 2**i} for i in range(12, 25)]
 
-        # 3. Triton 配置 (BLOCK_SIZE, num_warps)
+        # Triton 配置 (BLOCK_SIZE, num_warps)
         triton_tiles = [
             {"BLOCK_SIZE": 32, "num_warps": 2},
             {"BLOCK_SIZE": 128, "num_warps": 4},
@@ -25,7 +25,7 @@ class VectorAdditionFP32Spec(BaseOperatorSpec):
         ]
         self.tuning_configs = self.make_configs(triton_tiles, ["main"])
 
-        # 4. CUDA 配置 (native, float4)
+        # CUDA 配置 (native, float4)
         cuda_params = [{"bs": 64}, {"bs": 256}, {"bs": 512}, {"bs": 1024}]
         self.cuda_tuning_configs = self.make_configs(cuda_params, ["native", "float4"])
 
