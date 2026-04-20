@@ -6,34 +6,32 @@
 #endif
 
 __global__ void matrix_add_vec_kernel(const float* A, const float* B, float* C, int Ne) {
-    // blockDim.x 运行时等于 BLOCK_SIZE
-    int tid = blockDim.x * blockIdx.x + threadIdx.x;
-    int offset = tid * 4;
+    // 这是 1D Flattened 之后，使用 float4 优化的矩阵加法核函数
+    // 注意一个线程处理的是一个 float4 的向量元素
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (offset + 3 < Ne) {
-        // 利用 tid 索引 float4 指针，实现 128-bit 向量化加载/存储
-        // 
-        const float4* Av_ptr = reinterpret_cast<const float4*>(A);
-        const float4* Bv_ptr = reinterpret_cast<const float4*>(B);
-        float4* Cv_ptr = reinterpret_cast<float4*>(C);
+    const float4* A4 = reinterpret_cast<const float4*>(A);
+    const float4* B4 = reinterpret_cast<const float4*>(B);
+    float4* C4 = reinterpret_cast<float4*>(C);
 
-        // 向量化读取
-        float4 Av = Av_ptr[tid];
-        float4 Bv = Bv_ptr[tid];
+    if(tid * 4 + 3 < Ne){
+        float4 AData = A4[tid];
+        float4 BData = B4[tid];
+        float4 CData;
         
-        float4 Cv;
-        Cv.x = Av.x + Bv.x;
-        Cv.y = Av.y + Bv.y;
-        Cv.z = Av.z + Bv.z;
-        Cv.w = Av.w + Bv.w;
+        CData.x = AData.x + BData.x;
+        CData.y = AData.y + BData.y;
+        CData.z = AData.z + BData.z;
+        CData.w = AData.w + BData.w;
 
-        // 向量化写入
-        Cv_ptr[tid] = Cv;
-    } 
-    else if (offset < Ne) {
-        // 边界处理：处理末尾不足 4 个的部分
-        for (int i = offset; i < Ne; i++) {
-            C[i] = A[i] + B[i];
+        C4[tid] = CData;
+    }
+    else{
+        // 退化成单线程操作
+        for(int i = 0; i < 4; ++i){
+            int idx = tid * 4 + i;
+            if(idx < Ne)
+                C[idx] = A[idx] + B[idx];
         }
     }
 }
@@ -41,16 +39,17 @@ __global__ void matrix_add_vec_kernel(const float* A, const float* B, float* C, 
 
 void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N) {
     int Ne = N * N;
-    
-    const float* d_A = A.data_ptr<float>();
-    const float* d_B = B.data_ptr<float>();
-    float* d_C = C.data_ptr<float>();
+    int nVectors = (Ne + 3) / 4;
+    int threadsPerBlock = BLOCK_SIZE;
+    int blocksPerGrid = (nVectors + threadsPerBlock - 1) / threadsPerBlock;
 
-    // 使用编译时确定的 BLOCK_SIZE
-    int n_vec = (Ne + 3) / 4; 
-    int blocksPerGrid = (n_vec + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
-    matrix_add_vec_kernel<<<blocksPerGrid, BLOCK_SIZE>>>(d_A, d_B, d_C, Ne);
+    // 核函数下发的过程
+    matrix_add_vec_kernel<<<blocksPerGrid, threadsPerBlock>>>(
+        A.data_ptr<float>(),
+        B.data_ptr<float>(),
+        C.data_ptr<float>(),
+        Ne
+    );
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

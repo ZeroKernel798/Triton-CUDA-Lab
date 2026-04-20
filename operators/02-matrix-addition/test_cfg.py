@@ -15,7 +15,7 @@ class MatrixAdditionSpec(BaseOperatorSpec):
         self.perf_input = 8192
         self.x_vals = [{"N": 2**i} for i in range(8, 14)]
 
-        # 1. Triton 配置
+        # Triton 配置
         triton_tiles = [
             {"BLOCK_SIZE": 32, "num_warps": 2},
             {"BLOCK_SIZE": 128, "num_warps": 4},
@@ -23,7 +23,7 @@ class MatrixAdditionSpec(BaseOperatorSpec):
         ]
         self.tuning_configs = self.make_configs(triton_tiles, ["main"])
 
-        # 2. CUDA 配置 (1D vs 2D)
+        # CUDA 配置 (1D vs 2D)
         cuda_1d = [{"bs": 64}, {"bs": 256}, {"bs": 1024}]
         cuda_2d = [
             {"bx": 32, "by": 8}, 
@@ -33,9 +33,8 @@ class MatrixAdditionSpec(BaseOperatorSpec):
         
         # 这里的 version 字符串必须和文件名或实现版本对应
         self.cuda_tuning_configs = self.make_configs(cuda_1d, ["flattened_float4"])
-        self.cuda_tuning_configs.extend(self.make_configs(cuda_2d, ["native", "float4"]))
+        self.cuda_tuning_configs.extend(self.make_configs(cuda_2d, ["native"]))
 
-    # 1. 将 Python Config 转换为 C++ 宏
     def get_macros(self, config: Dict[str, Any]) -> Dict[str, Any]:
         version = config.get("version")
         macros = {}
@@ -50,7 +49,7 @@ class MatrixAdditionSpec(BaseOperatorSpec):
             
         return macros
 
-    # 2. 物理指标计算
+    # 物理指标计算
     def get_bytes_accessed(self, case: Dict[str, Any]) -> int:
         n = case.get("N", self.perf_input)
         # 读 A, B + 写 C (float32 = 4 bytes)
@@ -61,7 +60,7 @@ class MatrixAdditionSpec(BaseOperatorSpec):
         # 矩阵加法，每个位置 1 次加法
         return n * n
 
-    # 3. 验证与测试
+    # 验证与测试
     def reference_impl(self, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, N: int, **kwargs):
         """标准实现"""
         assert A.shape == (N, N)
