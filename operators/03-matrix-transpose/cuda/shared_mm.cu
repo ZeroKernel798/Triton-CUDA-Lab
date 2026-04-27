@@ -1,4 +1,3 @@
-#include <cuda_runtime.h>
 #include <torch/extension.h>
 
 #ifndef BLOCK_X
@@ -9,52 +8,69 @@
 #define BLOCK_Y 32
 #endif
 
-#include <cuda_runtime.h>
-#include <torch/extension.h>
+#define TILE_DIM 32
 
 __global__ void matrix_transpose_shared_kernel(const float* __restrict__ input, 
                                                float* __restrict__ output, 
                                                int rows, int cols) 
 {
-    __shared__ float data[32][33];
+    // transpose 算子的共享内存优化方案 通过共享内存实现读、写操作均能访问合并
+    // 为了方便进行 padding 消除银行冲突 我们固定共享内存大小为 32 32 
+    // 之后 padding 32 33 能消除银行冲突
+    __shared__ float tile[TILE_DIM][TILE_DIM + 1];
 
-    // 读取数据到共享内存 (Global -> Shared)
-    // 此时读操作在 Global Memory 是合并的
-    int x = blockDim.x * blockIdx.x + threadIdx.x;
-    int y = blockDim.y * blockIdx.y + threadIdx.y;
+    // 计算当前 Block 负责的 Tile 起始基地址
+    int tile_origin_col = blockIdx.x * TILE_DIM;
+    int tile_origin_row = blockIdx.y * TILE_DIM;
 
-    if (x < cols && y < rows) {
-        data[threadIdx.y][threadIdx.x] = input[y * cols + x];
+    // 先搬运数据，为了方便后续调整线程数目的同时保持逻辑正确，这里采用类网格跨步循环的思路
+    int tid = threadIdx.y * blockDim.x + threadIdx.x;
+    int total_elements = TILE_DIM * TILE_DIM;
+    int stride = blockDim.x * blockDim.y;
+
+    #pragma unroll
+    for (int i = tid; i < total_elements; i += stride) {
+        // 将一维的偏移量 i 转换回 Tile 内部的二维坐标
+        int r = i >> 5; 
+        int c = i & 31;
+
+        // 计算在全局内存中的实际坐标 (加上该 Block 处理的 Tile 基地址)
+        int global_r = tile_origin_row + r;
+        int global_c = tile_origin_col + c;
+
+        if (global_r < rows && global_c < cols) {
+            tile[r][c] = input[global_r * cols + global_c];
+        }
     }
-
-    // 必须同步，确保 Tile 数据全部加载完成
     __syncthreads();
 
-    // 将数据写回全局内存 (Shared -> Global)
-    // 通过交换索引，使得写操作在 Global Memory 也是合并的
-    // 计算转置后的新坐标
-    int x_new = blockDim.y * blockIdx.y + threadIdx.x;
-    int y_new = blockDim.x * blockIdx.x + threadIdx.y;
 
-    if (x_new < rows && y_new < cols) {
-        // 在写回时，我们读取共享内存是按列读，但写 Global 是按行写
-        output[y_new * rows + x_new] = data[threadIdx.x][threadIdx.y];
+    // 转置，然后写出数据
+    #pragma unroll
+    for (int i = tid; i < total_elements; i += stride) {
+        int r = i >> 5; 
+        int c = i & 31; 
+
+        int out_global_r = tile_origin_col + r; 
+        int out_global_c = tile_origin_row + c;
+
+        if (out_global_r < cols && out_global_c < rows) {
+            output[out_global_r * rows + out_global_c] = tile[c][r];
+        }
     }
+
 }
 
 void solve(torch::Tensor input, torch::Tensor output, int rows, int cols) {
-    auto device = input.device();
-    cudaSetDevice(device.index());
-
-    const float* d_input = input.data_ptr<float>();
-    float* d_output = output.data_ptr<float>();
-
-    // 直接使用宏定义的维度
     dim3 threadsPerBlock(BLOCK_X, BLOCK_Y);
     dim3 blocksPerGrid((cols + BLOCK_X - 1) / BLOCK_X,
                        (rows + BLOCK_Y - 1) / BLOCK_Y);
 
-    matrix_transpose_shared_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_input, d_output, rows, cols);
+    matrix_transpose_shared_kernel<<<blocksPerGrid, threadsPerBlock>>>(
+        input.data_ptr<float>(),
+        output.data_ptr<float>(),
+        rows, 
+        cols);
 }
 
 

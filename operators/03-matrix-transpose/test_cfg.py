@@ -11,16 +11,19 @@ class MatrixTransposeSpec(BaseOperatorSpec):
         self.atol = 1e-05
         self.rtol = 1e-05
         
-        # 测试规模定义 (保持原样)
+        # 测试规模定义 
         self.perf_input = {"rows": 7000, "cols": 6000}
         self.x_vals = [
             {"rows": 1024, "cols": 1024},
             {"rows": 2048, "cols": 4096},
+            {"rows": 4096, "cols": 2048},
             {"rows": 8192, "cols": 8192},
+            {"rows": 8192, "cols": 2048},
             {"rows": 7000, "cols": 6000},
+            {"rows": 16384, "cols": 16384},
         ]
 
-        # 1. Triton 配置
+        # Triton 配置
         triton_tiles = [
             {"BLOCK_ROW": 32, "BLOCK_COL": 32, "num_warps": 2},
             {"BLOCK_ROW": 8, "BLOCK_COL": 8, "num_warps": 2},
@@ -28,7 +31,7 @@ class MatrixTransposeSpec(BaseOperatorSpec):
         ]
         self.tuning_configs = self.make_configs(triton_tiles, ["native"])
 
-        # 2. CUDA 配置
+        # CUDA 配置
         cuda_tiles = [
             {"bx": 32, "by": 8},   # 线程粗化 4x
             {"bx": 16, "by": 16},  # 无粗化
@@ -36,8 +39,25 @@ class MatrixTransposeSpec(BaseOperatorSpec):
             {"bx": 32, "by": 32},  # 无粗化
         ]
         self.cuda_tuning_configs = self.make_configs(
-            cuda_tiles, ["native", "shared_mm", "shared_mm_ILP"]
+            cuda_tiles, ["shared_mm_ILP"]
         )
+
+        cuda_base_tiles = [
+            {"bx":32, "by":32},
+            {"bx":16, "by":16},
+            {"bx":8, "by":8},
+        ]
+        self.cuda_tuning_configs.extend(self.make_configs(cuda_base_tiles, ["native"]))
+
+        cuda_smem_tiles = [
+            {"bx":32, "by":32},
+            {"bx":32, "by":16},
+            {"bx":32, "by":8},
+            {"bx":16, "by":16},
+            {"bx":8, "by":8},
+        ]
+        self.cuda_tuning_configs.extend(self.make_configs(cuda_smem_tiles, ["shared_mm"]))
+
 
     def get_macros(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """将 Python Config 转换为 C++ 宏"""
