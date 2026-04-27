@@ -20,7 +20,7 @@ class MatrixTransposeSpec(BaseOperatorSpec):
             {"rows": 8192, "cols": 8192},
             {"rows": 8192, "cols": 2048},
             {"rows": 7000, "cols": 6000},
-            {"rows": 16384, "cols": 16384},
+            {"rows": 16000, "cols": 16000},
         ]
 
         # Triton 配置
@@ -31,32 +31,53 @@ class MatrixTransposeSpec(BaseOperatorSpec):
         ]
         self.tuning_configs = self.make_configs(triton_tiles, ["native"])
 
-        # CUDA 配置
-        cuda_tiles = [
-            {"bx": 32, "by": 8},   # 线程粗化 4x
-            {"bx": 16, "by": 16},  # 无粗化
-            {"bx": 32, "by": 16},  # 线程粗化 2x
-            {"bx": 32, "by": 32},  # 无粗化
+        # Swizzle 配置：额外引入 GROUP_SIZE 参数
+        # GROUP_SIZE 控制"多少个 pid_row 块先凑在一起"，越大写 L2 复用越好但 SM 负载均衡越差
+        # 推荐范围 4~16；矩阵越大、SM 越多时，更大的 GROUP_SIZE 收益越明显
+        swizzle_tiles = [
+            {"BLOCK_ROW": 32, "BLOCK_COL": 32, "num_warps": 4, "GROUP_SIZE": 4},
+            {"BLOCK_ROW": 32, "BLOCK_COL": 32, "num_warps": 4, "GROUP_SIZE": 8},
+            {"BLOCK_ROW": 32, "BLOCK_COL": 32, "num_warps": 8, "GROUP_SIZE": 8},
+            {"BLOCK_ROW": 64, "BLOCK_COL": 64, "num_warps": 4, "GROUP_SIZE": 8},
+            {"BLOCK_ROW": 64, "BLOCK_COL": 64, "num_warps": 8, "GROUP_SIZE": 8},
         ]
-        self.cuda_tuning_configs = self.make_configs(
-            cuda_tiles, ["shared_mm_ILP"]
-        )
+        self.tuning_configs.extend(self.make_configs(swizzle_tiles, ["swizzle"]))
 
+        # CUDA 配置
         cuda_base_tiles = [
             {"bx":32, "by":32},
-            {"bx":16, "by":16},
+            {"bx":32, "by":16},
+            {"bx":32, "by":8},
+            {"bx":32, "by":4},
             {"bx":8, "by":8},
         ]
-        self.cuda_tuning_configs.extend(self.make_configs(cuda_base_tiles, ["native"]))
+        self.cuda_tuning_configs = self.make_configs(
+            cuda_base_tiles, ["native"]
+        )
 
         cuda_smem_tiles = [
             {"bx":32, "by":32},
             {"bx":32, "by":16},
             {"bx":32, "by":8},
             {"bx":16, "by":16},
-            {"bx":8, "by":8},
         ]
-        self.cuda_tuning_configs.extend(self.make_configs(cuda_smem_tiles, ["shared_mm"]))
+        self.cuda_tuning_configs.extend(self.make_configs(cuda_smem_tiles, ["smem"]))
+
+        cuda_smem_f4_tiles = [
+            {"bx": 32, "by": 16},
+            {"bx": 32, "by": 8},
+            {"bx": 16, "by": 16},
+            {"bx": 8,  "by": 8},
+        ]
+        self.cuda_tuning_configs.extend(self.make_configs(cuda_smem_f4_tiles, ["smem_float4"]))
+
+        cuda_smem_f4_swizzle_tiles = [
+            {"bx": 32, "by": 16},
+            {"bx": 32, "by": 8},
+            {"bx": 16, "by": 16},
+            {"bx": 8,  "by": 8},
+        ]
+        self.cuda_tuning_configs.extend(self.make_configs(cuda_smem_f4_swizzle_tiles, ["smem_float4_swizzle"]))
 
 
     def get_macros(self, config: Dict[str, Any]) -> Dict[str, Any]:

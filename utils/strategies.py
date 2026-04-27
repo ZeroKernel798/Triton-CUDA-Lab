@@ -28,7 +28,7 @@ def run_profile_strategy(spec, valid_kernels, args, op_folder):
         log_master(f"\n🔍 [Profile Mode] 正在为 {display_name} 寻找最佳配置...")
         
         if k_type == "triton":
-            configs = getattr(spec, 'tuning_configs', [])
+            configs = [c for c in getattr(spec, 'tuning_configs', []) if c.get("version") == ver]
         else:
             configs = [c for c in getattr(spec, 'cuda_tuning_configs', []) if c.get("version") == ver]
         if not configs:
@@ -73,7 +73,7 @@ def run_scaling_strategy(spec, valid_kernels, args, op_folder):
         log_master("   " + "-" * (len(header) + 10))
 
         if k_type == "triton":
-            configs = getattr(spec, 'tuning_configs', [])
+            configs = [c for c in getattr(spec, 'tuning_configs', []) if c.get("version") == ver]
         else:
             configs = [c for c in getattr(spec, 'cuda_tuning_configs', []) if c.get("version") == ver]
         if not configs:
@@ -148,7 +148,7 @@ def run_tuning_strategy(spec, valid_kernels, args, op_folder):
         log_master("-" * len(header))
 
         if k_type == "triton":
-            configs = getattr(spec, 'tuning_configs', [])
+            configs = [c for c in getattr(spec, 'tuning_configs', []) if c.get("version") == ver]
         else:
             configs = [c for c in getattr(spec, 'cuda_tuning_configs', []) if c.get("version") == ver]
         if not configs:

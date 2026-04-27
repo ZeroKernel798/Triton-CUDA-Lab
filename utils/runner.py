@@ -34,7 +34,7 @@ def dispatch(args):
                     continue
                 
                 if k_type == "triton":
-                    cfgs = getattr(spec, 'tuning_configs', [])
+                    cfgs = [c for c in getattr(spec, 'tuning_configs', []) if c.get("version") == ver]
                 elif k_type == "cuda":
                     cfgs = [c for c in getattr(spec, 'cuda_tuning_configs', []) if c.get("version") == ver]
                 else:

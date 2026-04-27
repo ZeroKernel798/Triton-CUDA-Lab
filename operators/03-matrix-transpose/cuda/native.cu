@@ -10,7 +10,7 @@
 #define BLOCK_Y 16
 #endif
 
-__global__ void matrix_transpose_native_kernel(const float* __restrict__ input, 
+__global__ void tranpose_native_kernel(const float* __restrict__ input, 
                                               float* __restrict__ output, 
                                               int rows, int cols) 
 {
@@ -29,7 +29,7 @@ void solve(torch::Tensor input, torch::Tensor output, int rows, int cols) {
     dim3 blocksPerGrid((cols + BLOCK_X - 1) / BLOCK_X, (rows + BLOCK_Y - 1) / BLOCK_Y);
 
     // 启核函数
-    matrix_transpose_native_kernel<<<blocksPerGrid, threadsPerBlock>>>(
+    tranpose_native_kernel<<<blocksPerGrid, threadsPerBlock>>>(
         input.data_ptr<float>(),
         output.data_ptr<float>(),
         rows,

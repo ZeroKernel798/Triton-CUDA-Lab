@@ -10,7 +10,7 @@
 
 #define TILE_DIM 32
 
-__global__ void matrix_transpose_shared_kernel(const float* __restrict__ input, 
+__global__ void transpose_smem_kernel(const float* __restrict__ input, 
                                                float* __restrict__ output, 
                                                int rows, int cols) 
 {
@@ -63,10 +63,10 @@ __global__ void matrix_transpose_shared_kernel(const float* __restrict__ input,
 
 void solve(torch::Tensor input, torch::Tensor output, int rows, int cols) {
     dim3 threadsPerBlock(BLOCK_X, BLOCK_Y);
-    dim3 blocksPerGrid((cols + BLOCK_X - 1) / BLOCK_X,
-                       (rows + BLOCK_Y - 1) / BLOCK_Y);
+    dim3 blocksPerGrid((cols + TILE_DIM - 1) / TILE_DIM,
+                       (rows + TILE_DIM - 1) / TILE_DIM);
 
-    matrix_transpose_shared_kernel<<<blocksPerGrid, threadsPerBlock>>>(
+    transpose_smem_kernel<<<blocksPerGrid, threadsPerBlock>>>(
         input.data_ptr<float>(),
         output.data_ptr<float>(),
         rows, 
@@ -76,7 +76,7 @@ void solve(torch::Tensor input, torch::Tensor output, int rows, int cols) {
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     namespace py = pybind11;
-    m.def("solve", &solve, "Shared Memory Matrix Transpose (Macro Version)",
+    m.def("solve", &solve, "Shared Memory Matrix Transpose",
           py::arg("input"), 
           py::arg("output"), 
           py::arg("rows"), 
