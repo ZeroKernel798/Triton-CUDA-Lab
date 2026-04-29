@@ -43,16 +43,30 @@ class RMSNormSpec(BaseOperatorSpec):
         self.tuning_configs = self.make_configs(triton_params, ["native"])
 
         # 4. CUDA 配置生成
-        cuda_params = []
-        for block_size, vec in itertools.product([128, 256, 512], [1, 2, 4]):
-            cuda_params.append({"block_size": block_size, "vec": vec})
-        self.cuda_tuning_configs = self.make_configs(cuda_params, ["native"])
+        # native CUDA 实现是一行一个 warp，因此 block_x 固定为 32。
+        cuda_native_params = [
+            {"block_x": 32, "block_y": 1},
+            {"block_x": 32, "block_y": 2},
+            {"block_x": 32, "block_y": 4},
+            {"block_x": 32, "block_y": 8},
+            {"block_x": 32, "block_y": 16},
+        ]
+        # rowblock CUDA 实现是一个 block 负责一行，因此只调每行线程数。
+        cuda_rowblock_params = [
+            {"block_x": 32},
+            {"block_x": 64},
+            {"block_x": 128},
+            {"block_x": 256},
+            {"block_x": 512},
+        ]
+        self.cuda_tuning_configs = self.make_configs(cuda_native_params, ["native"])
+        self.cuda_tuning_configs.extend(self.make_configs(cuda_rowblock_params, ["rowblock"]))
 
     # 1. 将 Python Config 转换为 C++ 宏
     def get_macros(self, config: Dict[str, Any]) -> Dict[str, Any]:
         macros = {
-            "BLOCK_SIZE": config.get("block_size"),
-            "VEC": config.get("vec"),
+            "BLOCK_X": config.get("block_x"),
+            "BLOCK_Y": config.get("block_y"),
         }
         return {k: v for k, v in macros.items() if v is not None}
 
@@ -86,8 +100,7 @@ class RMSNormSpec(BaseOperatorSpec):
 
         x_fp32 = X.float()
         rms = torch.rsqrt(torch.mean(x_fp32 * x_fp32, dim=1, keepdim=True) + eps)
-        out = (x_fp32 * rms) * gamma.float()
-        Y.copy_(out.to(X.dtype))
+        return ((x_fp32 * rms) * gamma.float()).to(X.dtype)
 
     def generate_example_test(self) -> Dict[str, Any]:
         dtype = torch.float32

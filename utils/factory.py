@@ -10,8 +10,8 @@ def get_executor_instance(op_folder, spec, k_info, cfg):
     """
     ver, path, k_type = k_info['ver'], k_info['path'], k_info['type']
 
-    if ver == "official":
-        return TorchExecutor(spec, cfg)
+    if k_type == "torch":
+        return TorchExecutor(spec, cfg, ver)
     
     if k_type == "triton":
         return TritonExecutor(op_folder, path, spec, cfg)

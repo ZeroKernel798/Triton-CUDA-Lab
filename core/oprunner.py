@@ -19,9 +19,11 @@ class OperatorRunner:
                 out = self.executor.run(case)
                 # 深度拷贝，防止参考实现修改了原始数据
                 ref_case = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in case.items()}
-                self.spec.reference_impl(**ref_case)
+                ref_out = self.spec.reference_impl(**ref_case)
+                if ref_out is None:
+                    ref_out = ref_case[self.spec.output_name]
                 if not self.spec.validate({self.spec.output_name: out}, 
-                                        {self.spec.output_name: ref_case[self.spec.output_name]}):
+                                        {self.spec.output_name: ref_out}):
                     return False
             except Exception as e:
                 log_master(f"      ⚠️ 验证异常: {e}")

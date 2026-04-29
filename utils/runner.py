@@ -13,11 +13,23 @@ def dispatch(args):
         log_master(f"\n🧬 [Operator Lab] {spec.name}")
 
         kernel_infos = loader.get_kernel_files(op_folder)
-        kernel_infos.append({
-            'ver': 'official', 
-            'path': None,      
-            'type': 'torch'     
-        })
+        kernel_infos.extend([
+            {
+                'ver': 'official_eager',
+                'path': None,
+                'type': 'torch'
+            },
+            {
+                'ver': 'official_compile',
+                'path': None,
+                'type': 'torch'
+            },
+            {
+                'ver': 'official_auto',
+                'path': None,
+                'type': 'torch'
+            },
+        ])
         
         valid_kernels = {} 
         

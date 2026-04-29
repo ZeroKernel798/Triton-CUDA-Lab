@@ -11,9 +11,10 @@ logging.getLogger("torch._dynamo").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch._inductor")
 
 class TorchExecutor(BaseExecutor):
-    def __init__(self, spec, config):
-        # 统一命名为 official，内部逻辑自动切换
-        super().__init__("official", None, spec, config)
+    def __init__(self, spec, config, mode="official_auto"):
+        # torch baseline 支持 eager / compile / auto 三种对比口径。
+        super().__init__(mode, None, spec, config)
+        self.mode = mode
         self.fastest_fn = None
         self._is_autotuned = False
         self.compiled_fn = None
@@ -47,9 +48,19 @@ class TorchExecutor(BaseExecutor):
     def autotune(self, inputs):
         """自动寻优逻辑"""
         if self._is_autotuned: return
-        
-        # 确保编译对象已准备好
+
+        if self.mode == "official_eager":
+            self.fastest_fn = self.spec.reference_impl
+            self._is_autotuned = True
+            return
+
+        # compile / auto 模式都需要准备 torch.compile 包装。
         self.compile()
+
+        if self.mode == "official_compile":
+            self.fastest_fn = self.compiled_fn
+            self._is_autotuned = True
+            return
 
         # 1. 测试 Eager
         ms_eager = self._get_median_ms(self.spec.reference_impl, inputs)
@@ -73,9 +84,7 @@ class TorchExecutor(BaseExecutor):
             self.autotune(inputs)
         
         # 2. 执行计算 (不管它是 Eager 还是 Compile)
-        # 我们不关心它的返回值，只关心它对 inputs 字典里 Tensor 的修改
-        self.fastest_fn(**inputs)
+        # 兼容返回式 reference_impl 和原地写输出的 reference_impl。
+        out = self.fastest_fn(**inputs)
         
-        # 3. 🌟 核心修复：直接从 inputs 字典里根据 Spec 定义的名字拿结果
-        # 这样即便 reference_impl 忘了写 return，我们也能拿到被修改后的 Tensor
-        return inputs[self.spec.output_name]
+        return out if out is not None else inputs[self.spec.output_name]
