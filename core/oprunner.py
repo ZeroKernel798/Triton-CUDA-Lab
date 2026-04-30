@@ -34,8 +34,9 @@ class OperatorRunner:
         """物理指标测量"""
         test_case = self.spec.generate_performance_test(size_cfg)
         ms = self.executor.benchmark(test_case)
-        gbps = self.spec.get_throughput(test_case, ms)
-        tflops = self.spec.get_flops(test_case, ms)
+        metrics_case = {**test_case, "_config": self.executor.config}
+        gbps = self.spec.get_throughput(metrics_case, ms)
+        tflops = self.spec.get_flops(metrics_case, ms)
         return {"ms": ms, "gbps": gbps, "tflops": tflops}
     
     def profile(self, size_cfg):

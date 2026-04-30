@@ -1,4 +1,6 @@
 #include <torch/extension.h>
+#include <c10/util/BFloat16.h>
+#include <cuda_bf16.h>
 
 
 #ifndef BLOCK_X
@@ -18,9 +20,9 @@ __device__ __forceinline__ float warp_sum(float val){
 }
 
 __global__ void rmsnorm_native_kernel(
-    const float* X,
-    const float* gamma,
-    float* Y,
+    const __nv_bfloat16* X,
+    const __nv_bfloat16* gamma,
+    __nv_bfloat16* Y,
     int M,
     int N,
     float eps
@@ -32,14 +34,17 @@ __global__ void rmsnorm_native_kernel(
         // 这个地方 我们做类似于网格跨步循环的操作来读取数据 使得一个 warp 可以负责一整行的数据
         int lane_id = threadIdx.x % 32;
         for(int i = lane_id; i < N; i += 32){
-            sum += X[row * N + i] * X[row * N + i];
+            float x = __bfloat162float(X[row * N + i]);
+            sum += x * x;
         }
         // 这里做碟形规约，让 warp 中所有的线程都拿到完整的平方和
         sum = warp_sum(sum);
         // 这里根据平方和、权重、偏置，计算最终的结果
         float scale = 1.0f / sqrtf(sum / N + eps);
         for(int i = lane_id; i < N; i += 32){
-            Y[row * N + i] = X[row * N + i] * scale * gamma[i];
+            float x = __bfloat162float(X[row * N + i]);
+            float g = __bfloat162float(gamma[i]);
+            Y[row * N + i] = __float2bfloat16(x * scale * g);
         }
     }
 }
@@ -58,9 +63,9 @@ void solve(
     dim3 blocksPerGrid(1, (M + BLOCK_Y - 1) / BLOCK_Y);
 
     rmsnorm_native_kernel<<<blocksPerGrid, threadsPerBlock>>>(
-        X.data_ptr<float>(),
-        gamma.data_ptr<float>(),
-        Y.data_ptr<float>(),
+        reinterpret_cast<const __nv_bfloat16*>(X.data_ptr<c10::BFloat16>()),
+        reinterpret_cast<const __nv_bfloat16*>(gamma.data_ptr<c10::BFloat16>()),
+        reinterpret_cast<__nv_bfloat16*>(Y.data_ptr<c10::BFloat16>()),
         M,
         N,
         eps

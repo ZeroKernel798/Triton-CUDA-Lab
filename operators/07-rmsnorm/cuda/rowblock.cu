@@ -1,4 +1,6 @@
 #include <torch/extension.h>
+#include <c10/util/BFloat16.h>
+#include <cuda_bf16.h>
 
 
 #ifndef BLOCK_X
@@ -14,9 +16,9 @@ __device__ __forceinline__ float warp_sum(float val){
 }
 
 __global__ void rmsnorm_rowblock_kernel(
-    const float* X,
-    const float* gamma,
-    float* Y,
+    const __nv_bfloat16* X,
+    const __nv_bfloat16* gamma,
+    __nv_bfloat16* Y,
     int M,
     int N,
     float eps
@@ -34,7 +36,8 @@ __global__ void rmsnorm_rowblock_kernel(
 
         float sum = 0.0f;
         for(int i = tid; i < N; i += blockDim.x){
-            sum += X[row * N + i] * X[row * N + i];
+            float x = __bfloat162float(X[row * N + i]);
+            sum += x * x;
         }
 
         // 第一阶段：每个 warp 内部规约，lane 0 得到该 warp 的 partial sum。
@@ -59,7 +62,9 @@ __global__ void rmsnorm_rowblock_kernel(
 
         float scale = scale_smem;
         for(int i = tid; i < N; i += blockDim.x){
-            Y[row * N + i] = X[row * N + i] * scale * gamma[i];
+            float x = __bfloat162float(X[row * N + i]);
+            float g = __bfloat162float(gamma[i]);
+            Y[row * N + i] = __float2bfloat16(x * scale * g);
         }
     }
 }
@@ -78,9 +83,9 @@ void solve(
     dim3 blocksPerGrid(M);
 
     rmsnorm_rowblock_kernel<<<blocksPerGrid, threadsPerBlock>>>(
-        X.data_ptr<float>(),
-        gamma.data_ptr<float>(),
-        Y.data_ptr<float>(),
+        reinterpret_cast<const __nv_bfloat16*>(X.data_ptr<c10::BFloat16>()),
+        reinterpret_cast<const __nv_bfloat16*>(gamma.data_ptr<c10::BFloat16>()),
+        reinterpret_cast<__nv_bfloat16*>(Y.data_ptr<c10::BFloat16>()),
         M,
         N,
         eps
