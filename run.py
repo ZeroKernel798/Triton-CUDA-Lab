@@ -9,7 +9,7 @@ def main():
     parser.add_argument("--op", type=str, required=True, help="算子名模糊匹配")
     parser.add_argument("--skip-val", action="store_true", help="跳过精度校验")
     parser.add_argument("--mode", choices=["scaling", "tuning", "profile"], default="scaling")
-    parser.add_argument("--metrics", type=str, default="ms", help="'ms', 'bw', 'flops' or 'all'")
+    parser.add_argument("--metrics", type=str, default="ms", help="'ms', 'mbu', 'mfu' or 'all' (legacy: 'bw', 'flops')")
     
     args = parser.parse_args()
     

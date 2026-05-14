@@ -3,6 +3,18 @@ from core.oprunner import OperatorRunner, log_master
 from utils.logger import plot_scaling_line, plot_tuning_bar
 from utils.factory import get_executor_instance
 
+
+def _resolve_metrics(raw_metrics):
+    metric_aliases = {
+        "bw": "mbu",
+        "bandwidth": "mbu",
+        "flops": "mfu",
+        "compute": "mfu",
+    }
+    if raw_metrics.lower() == "all":
+        return ["ms", "mbu", "mfu"]
+    return [metric_aliases.get(m.strip().lower(), m.strip().lower()) for m in raw_metrics.split(',')]
+
 def run_profile_strategy(spec, valid_kernels, args, op_folder):
     raw_input = getattr(spec, 'perf_input', None)
     size_cfg = raw_input[0] if isinstance(raw_input, list) else raw_input
@@ -68,7 +80,7 @@ def run_scaling_strategy(spec, valid_kernels, args, op_folder):
 
         log_master(f"\n🚀 正在评估内核实现: {display_name}")
         
-        header = f"{'Size (RxC)':>15} | {'Latency':>14} | {'Throughput':>18} | {'Compute':>15} | Best Config"
+        header = f"{'Size (RxC)':>15} | {'Latency':>14} | {'MBU':>12} | {'MFU':>12} | Best Config"
         log_master(header)
         log_master("   " + "-" * (len(header) + 10))
 
@@ -80,7 +92,7 @@ def run_scaling_strategy(spec, valid_kernels, args, op_folder):
             configs = [{}]
 
         for size_cfg in spec.x_vals:
-            best_res = {"ms": float('inf'), "gbps": 0.0, "tflops": 0.0, "cfg": None}
+            best_res = {"ms": float('inf'), "gbps": 0.0, "tflops": 0.0, "mbu": 0.0, "mfu": 0.0, "cfg": None}
             display_size = "x".join([str(v) for v in size_cfg.values()])
             total_elements = 1
             for v in size_cfg.values(): total_elements *= v
@@ -99,21 +111,23 @@ def run_scaling_strategy(spec, valid_kernels, args, op_folder):
                 "size_val": total_elements, 
                 "ms": best_res["ms"],
                 "gbps": best_res["gbps"],
-                "tflops": best_res["tflops"]
+                "tflops": best_res["tflops"],
+                "mbu": best_res["mbu"],
+                "mfu": best_res["mfu"]
             })
 
             latency_str = f"{best_res['ms']:.4f} ms"
-            tp_str      = f"{best_res['gbps']:.2f} GB/s"
-            flops_str   = f"{best_res['tflops']:.2f} TFLOPS"
+            mbu_str     = f"{best_res['mbu']:.2f}%"
+            mfu_str     = f"{best_res['mfu']:.2f}%"
             display_cfg = {k: v for k, v in best_res['cfg'].items() if k != 'version'}
-            log_master(f"{display_size:>15} | {latency_str:>14} | {tp_str:>18} | {flops_str:>15} | {display_cfg}")
+            log_master(f"{display_size:>15} | {latency_str:>14} | {mbu_str:>12} | {mfu_str:>12} | {display_cfg}")
 
     if all_results:
         if not dist.is_initialized() or dist.get_rank() == 0:
             raw_metrics = getattr(args, 'metrics', 'ms')
-            target_metrics = ["ms", "bw", "flops"] if raw_metrics.lower() == "all" else [m.strip() for m in raw_metrics.split(',')]
+            target_metrics = _resolve_metrics(raw_metrics)
             for m in target_metrics:
-                if m in ["ms", "bw", "flops"]:
+                if m in ["ms", "mbu", "mfu", "bw", "flops"]:
                     plot_scaling_line(f"{spec.name}_scaling", all_results, metric=m)
 
 
@@ -143,7 +157,7 @@ def run_tuning_strategy(spec, valid_kernels, args, op_folder):
         log_master(f"\n🔍 [Tuning Mode] 正在深度评估内核: {display_name}")
         log_master(f"📍 Target Size: {size_label}")
         
-        header = f"{'Config':>30} | {'Latency':>14} | {'Throughput':>18} | {'Compute':>15}"
+        header = f"{'Config':>30} | {'Latency':>14} | {'MBU':>12} | {'MFU':>12}"
         log_master(header)
         log_master("-" * len(header))
 
@@ -167,18 +181,20 @@ def run_tuning_strategy(spec, valid_kernels, args, op_folder):
                 "config_label": cfg_str, 
                 "ms": perf['ms'],
                 "gbps": perf['gbps'],
-                "tflops": perf['tflops']
+                "tflops": perf['tflops'],
+                "mbu": perf['mbu'],
+                "mfu": perf['mfu']
             })
 
             latency_str = f"{perf['ms']:.4f} ms"
-            tp_str      = f"{perf['gbps']:.2f} GB/s"
-            flops_str   = f"{perf['tflops']:.2f} TFLOPS"
-            log_master(f"{cfg_str:>30} | {latency_str:>14} | {tp_str:>18} | {flops_str:>15}")
+            mbu_str     = f"{perf['mbu']:.2f}%"
+            mfu_str     = f"{perf['mfu']:.2f}%"
+            log_master(f"{cfg_str:>30} | {latency_str:>14} | {mbu_str:>12} | {mfu_str:>12}")
 
     if all_results:
         if not dist.is_initialized() or dist.get_rank() == 0:
             raw_metrics = getattr(args, 'metrics', 'ms')
-            target_metrics = ["ms", "bw", "flops"] if raw_metrics.lower() == "all" else [m.strip() for m in raw_metrics.split(',')]
+            target_metrics = _resolve_metrics(raw_metrics)
             for m in target_metrics:
-                if m in ["ms", "bw", "flops"]:
+                if m in ["ms", "mbu", "mfu", "bw", "flops"]:
                     plot_tuning_bar(f"{spec.name}_tuning_sz{size_label}", all_results, metric=m)

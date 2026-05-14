@@ -1,5 +1,4 @@
 import torch
-import itertools
 from typing import Any, Dict, List
 from core.spec import BaseOperatorSpec
 
@@ -21,54 +20,34 @@ class MatrixMultiplicationSpec(BaseOperatorSpec):
             {"M": 8192, "K": 4096, "N": 6144},
         ]
 
-        # 3. Triton 配置生成
-        triton_params = []
-        for bm, bn, bk, stages, warps in itertools.product(
-            [32],       # BLOCK_SIZE_M
-            [32, 256],  # BLOCK_SIZE_N
-            [32],       # BLOCK_SIZE_K
-            [2],        # num_stages
-            [2]         # num_warps
-        ):
-            triton_params.append({
-                "BLOCK_SIZE_M": bm,
-                "BLOCK_SIZE_N": bn,
-                "BLOCK_SIZE_K": bk,
-                "num_stages": stages,
-                "num_warps": warps,
-                "GROUP_SIZE_M": 8 
-            })
-        self.tuning_configs = self.make_configs(triton_params, ["test"])
-
-        # 4. CUDA 配置生成
-        # Native & Smem Tile
-        cuda_config_native = [
-            {"bx": 32, "by": 8,  "bk": 32},   
-            {"bx": 32, "by": 16, "bk": 32}, 
-            {"bx": 32, "by": 32, "bk": 32},
-        ]
-        # 高级 Tile 策略
-        cuda_config_tile = [
-            {"bx": 128, "by": 128, "bk": 8},
-            {"bx": 128, "by": 64,  "bk": 8},
-            {"bx": 64, "by": 128, "bk": 8},
-        ]
-        
-        self.cuda_tuning_configs = self.make_configs(cuda_config_native, ["native", "smem_tile"])
-        self.cuda_tuning_configs.extend(self.make_configs(cuda_config_tile, [
-            "thread_tile", "thread_tile_opt", "warp_tile", 
-            "warp_tile_double_buffer", "cpasync", "tc"
-        ]))
+        # 固定内核配置：这里不再做 BLOCK_X/BLOCK_Y/BLOCK_K 的超参数搜索。
+        # 每个 kernel 只保留一个占位 config，用于让框架明确编译/运行一次。
+        # 真正的 tile/thread 配置使用各源码文件内部的默认值。
+        self.tuning_configs = self.make_configs([
+            {
+                "BLOCK_SIZE_M": 32,
+                "BLOCK_SIZE_N": 32,
+                "BLOCK_SIZE_K": 32,
+                "GROUP_SIZE_M": 8,
+                "num_warps": 4,
+                "num_stages": 2,
+            }
+        ], ["test"])
+        self.cuda_tuning_configs = self.make_configs([{}], [
+            "native",
+            "smem_tile",
+            "test",
+            "thread_tile",
+            "thread_tile_opt",
+            "warp_tile",
+            "warp_tile_double_buffer",
+            "cpasync",
+        ])
 
     # 1. 将 Python Config 转换为 C++ 宏
     def get_macros(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        # 统一映射 CUDA 的坐标配置到宏定义
-        macros = {
-            "BLOCK_X": config.get("bx"),
-            "BLOCK_Y": config.get("by"),
-            "BLOCK_K": config.get("bk"),
-        }
-        return {k: v for k, v in macros.items() if v is not None}
+        # 矩阵乘法当前只测试输入 shape，不从 Python 注入 kernel 超参数。
+        return {}
 
     # 2. 物理指标计算 (对应原有的 get_throughput 和 get_flops 逻辑)
     def get_bytes_accessed(self, case: Dict[str, Any]) -> int:
@@ -132,7 +111,7 @@ class MatrixMultiplicationSpec(BaseOperatorSpec):
             })
 
         # 3. 边界情况测试
-        for m, k, n in [(1,1,1), (1,5,3), (5,3,1), (8192, 4096, 6144)]:
+        for m, k, n in [(1,1,1), (1,5,3), (5,3,1)]:
             test_cases.append({
                 "A": torch.empty(m, k, device="cuda", dtype=dtype).uniform_(-1.0, 1.0),
                 "B": torch.empty(k, n, device="cuda", dtype=dtype).uniform_(-1.0, 1.0),

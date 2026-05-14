@@ -10,10 +10,12 @@ def plot_scaling_line(op_name, data_records, metric="gbps", output_dir="plots"):
     # 1. 指标配置映射
     metric_map = {
         "ms":     {"key": "ms",     "label": "Latency (ms)",      "title": "Latency Scaling"},
+        "mbu":    {"key": "mbu",    "label": "MBU (%)",           "title": "Memory Bandwidth Utilization"},
+        "mfu":    {"key": "mfu",    "label": "MFU (%)",           "title": "Machine FLOPS Utilization"},
         "bw":     {"key": "gbps",   "label": "Throughput (GB/s)", "title": "Bandwidth Scaling"},
         "flops":  {"key": "tflops", "label": "Compute (TFLOPS)",  "title": "Compute Performance"}
     }
-    cfg = metric_map.get(metric, metric_map["bw"])
+    cfg = metric_map.get(metric, metric_map["mbu"])
     
     # 2. 提取所有唯一的尺寸标签，并按数值大小(size_val)排序，确保横轴有序
     # 这样可以处理 1024x1024, 2048x4096 这种字符串横坐标
@@ -66,6 +68,8 @@ def plot_tuning_bar(op_name, data_records, metric="ms", output_dir="plots"):
     # 1. 映射配置
     metric_map = {
         "ms":    {"key": "ms",     "label": "Latency (ms)",      "title": "Latency Tuning"},
+        "mbu":   {"key": "mbu",    "label": "MBU (%)",           "title": "Memory Bandwidth Utilization Tuning"},
+        "mfu":   {"key": "mfu",    "label": "MFU (%)",           "title": "Machine FLOPS Utilization Tuning"},
         "bw":    {"key": "gbps",   "label": "Throughput (GB/s)", "title": "Bandwidth Tuning"},
         "flops": {"key": "tflops", "label": "Compute (TFLOPS)",  "title": "Compute Tuning"}
     }

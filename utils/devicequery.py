@@ -1,5 +1,48 @@
 import torch
-import pynvml
+
+try:
+    import pynvml
+except ImportError:
+    pynvml = None
+
+
+def get_peak_device_metrics(device_idx=None):
+    """Return rough theoretical peak memory bandwidth and FP32 compute.
+
+    The values are used for utilization-style lab metrics:
+    - MBU = measured GB/s / theoretical memory GB/s
+    - MFU = measured TFLOPS / theoretical FP32 TFLOPS
+
+    They are intentionally approximate because consumer/datacenter GPUs can have
+    different boost clocks, tensor-core peaks, sparsity modes, and dtype peaks.
+    """
+    if device_idx is None:
+        device_idx = torch.cuda.current_device()
+
+    if pynvml is None:
+        return {"peak_bw_gbps": 0.0, "peak_fp32_tflops": 0.0}
+
+    pynvml.nvmlInit()
+    try:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_idx)
+        prop = torch.cuda.get_device_properties(device_idx)
+
+        cores_per_sm = 128 if prop.major >= 8 else 64
+        total_cores = cores_per_sm * prop.multi_processor_count
+
+        bus_width = pynvml.nvmlDeviceGetMemoryBusWidth(handle)
+        mem_clock = pynvml.nvmlDeviceGetMaxClockInfo(handle, pynvml.NVML_CLOCK_MEM)
+        gpu_clock = pynvml.nvmlDeviceGetMaxClockInfo(handle, pynvml.NVML_CLOCK_SM)
+
+        peak_bw_gbps = (mem_clock * 1e6 * 2 * bus_width / 8) / 1e9
+        peak_fp32_tflops = total_cores * gpu_clock * 1e6 * 2 / 1e12
+
+        return {
+            "peak_bw_gbps": peak_bw_gbps,
+            "peak_fp32_tflops": peak_fp32_tflops,
+        }
+    finally:
+        pynvml.nvmlShutdown()
 
 def get_detailed_device_query():
     # 1. 初始化 NVML

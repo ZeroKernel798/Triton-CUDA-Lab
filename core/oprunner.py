@@ -1,5 +1,6 @@
 import torch
 import torch.distributed as dist
+from utils.devicequery import get_peak_device_metrics
 
 def log_master(msg):
     """只在 Rank 0 打印，防止分布式环境下日志爆炸"""
@@ -8,8 +9,19 @@ def log_master(msg):
 
 
 class OperatorRunner:
+    _peak_metrics = None
+
     def __init__(self, spec, executor, args):
         self.spec, self.executor, self.args = spec, executor, args
+
+    @classmethod
+    def get_peak_metrics(cls):
+        if cls._peak_metrics is None:
+            try:
+                cls._peak_metrics = get_peak_device_metrics()
+            except Exception:
+                cls._peak_metrics = {"peak_bw_gbps": 0.0, "peak_fp32_tflops": 0.0}
+        return cls._peak_metrics
 
     def validate(self) -> bool:
         """精度验证：最小闭环 + 功能测试"""
@@ -37,7 +49,12 @@ class OperatorRunner:
         metrics_case = {**test_case, "_config": self.executor.config}
         gbps = self.spec.get_throughput(metrics_case, ms)
         tflops = self.spec.get_flops(metrics_case, ms)
-        return {"ms": ms, "gbps": gbps, "tflops": tflops}
+        peak_metrics = self.get_peak_metrics()
+        peak_bw = peak_metrics.get("peak_bw_gbps", 0.0)
+        peak_flops = peak_metrics.get("peak_fp32_tflops", 0.0)
+        mbu = gbps / peak_bw * 100 if peak_bw > 0 else 0.0
+        mfu = tflops / peak_flops * 100 if peak_flops > 0 else 0.0
+        return {"ms": ms, "gbps": gbps, "tflops": tflops, "mbu": mbu, "mfu": mfu}
     
     def profile(self, size_cfg):
         """精准捕获：只 Profile 性能最优的那几次运行"""
