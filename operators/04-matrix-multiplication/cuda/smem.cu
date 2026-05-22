@@ -15,38 +15,29 @@
 
 // 这里是设置线程块的参数
 #ifndef BLOCK_X
-#define BLOCK_X 16
+#define BLOCK_X 32
 #endif
 #ifndef BLOCK_Y
-#define BLOCK_Y 16
+#define BLOCK_Y 32
 #endif
 
-// 定义宏 方便操作
-#define FLOAT4(var) (reinterpret_cast<float4*>(&(var))[0])
-#define CFLOAT4(var) (reinterpret_cast<float4*>(&(var))[0])
-
-__global__ void smem_tiled_matmul_kernel(const float* A, const float* B, float* C, int N, int M, int K) 
+__global__ void smem_tiled_sgemm_kernel(const float* A, const float* B, float* C, int N, int M, int K) 
 {
-    // 基于共享内存的分块矩阵乘法实现，优化了线程数，现在一个线程负责 4 个位置的计算
+    // 基于共享内存的分块矩阵乘法实现
     __shared__ float sA[BM][BK];
     __shared__ float sB[BK][BN];
 
-    // 先搬运数据到共享内存 我们既然一个线程负责 4 个位置，我们直接使用 float4 来进行加速
-    // 线程分配为 8 个线程负责一行，总计负责 32 行，共计 256 线程
+    // 先搬运数据到共享内存 一个线程搬运一个即可
     float sum = 0.0f;
-    int tid = threadIdx.y * BLOCK_Y + threadIdx.x;
-    int tile_row = tid / 8;
-    int tile_col = tid % 8 * 4;
-
-    const float4* A4 = reinte
-
     for(int k = 0; k < (K + BK - 1) / BK; k++){
         // 先搬运矩阵 A 到共享内存
-        int a_row = blockIdx.y * BM + tile_row;
-        int a_col = k * BK + tile_col;
-        if(a_row < )
-        float4 reg_A = CFLOAT4(A[a_row * K + a_col]);
-    
+        int a_row = blockIdx.y * BM + threadIdx.y;
+        int a_col = k * BK + threadIdx.x;
+        if(a_row < M && a_col < K)
+            sA[threadIdx.y][threadIdx.x] = A[a_row * K + a_col];
+        else
+            sA[threadIdx.y][threadIdx.x] = 0.0f;
+        
         // 搬运矩阵 B 到共享内存
         int b_row = k * BK + threadIdx.y;
         int b_col = blockIdx.x * BN + threadIdx.x;
@@ -79,12 +70,12 @@ void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int M, int 
     dim3 threadsPerBlock(BLOCK_X, BLOCK_Y);
     dim3 blocksPerGrid((N + BLOCK_X - 1) / BLOCK_X, (M + BLOCK_Y - 1) / BLOCK_Y); 
 
-    smem_tiled_matmul_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, N, M, K);
+    smem_tiled_sgemm_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, N, M, K);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     namespace py = pybind11;
-    m.def("solve", &solve, "SMem Tiled Matrix Multiplication Use Float4",
+    m.def("solve", &solve, "SMem Tiled Matrix Multiplication",
           py::arg("A"), py::arg("B"), py::arg("C"), 
           py::arg("N"), py::arg("M"), py::arg("K")); 
 }

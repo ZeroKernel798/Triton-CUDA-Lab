@@ -8,7 +8,7 @@
 #define BLOCK_Y 16
 #endif
 
-__global__ void native_matmul_kernel(const float* A, const float* B, float* C, int N, int M, int K) 
+__global__ void native_sgemm_kernel(const float* A, const float* B, float* C, int N, int M, int K) 
 {
     // 朴素矩阵乘法 A*B = C   A:M*K B:K*N C:M*N
     int col = blockDim.x * blockIdx.x + threadIdx.x;
@@ -33,7 +33,7 @@ void solve(torch::Tensor A, torch::Tensor B, torch::Tensor C, int N, int M, int 
     dim3 threadsPerBlock(BLOCK_X, BLOCK_Y);
     dim3 blocksPerGrid((N + BLOCK_X - 1) / BLOCK_X, (M + BLOCK_Y - 1) / BLOCK_Y); 
 
-    native_matmul_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, N, M, K);
+    native_sgemm_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, N, M, K);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
