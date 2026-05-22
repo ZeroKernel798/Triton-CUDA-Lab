@@ -1,4 +1,6 @@
 __pycache__/
+lab/
+.venv/
 *.so
 *.py[cod]
 build/

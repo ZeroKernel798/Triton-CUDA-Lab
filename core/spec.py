@@ -40,6 +40,20 @@ class BaseOperatorSpec(abc.ABC):
         # 没找到再去 CUDA 桶找
         return [c for c in getattr(self, 'cuda_tuning_configs', []) if c.get('version') == version]
 
+    def should_skip_validation(self, version: str, config: Dict[str, Any] | None = None) -> bool:
+        """
+        允许具体算子按版本选择性跳过精度验证。
+        默认所有版本都参与验证。
+        """
+        return False
+
+    def get_validation_cases(self, version: str, config: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+        """
+        允许具体算子按版本定制验证输入。
+        默认沿用最小闭环 + 功能回归。
+        """
+        return [self.generate_example_test()] + self.generate_functional_test()
+
     # 2. 物理指标计算 
     def get_throughput(self, case: Dict[str, Any], ms: float) -> float:
         """计算吞吐量 (GB/s)"""

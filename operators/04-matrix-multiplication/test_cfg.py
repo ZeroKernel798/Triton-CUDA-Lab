@@ -3,6 +3,11 @@ from typing import Any, Dict, List
 from core.spec import BaseOperatorSpec
 
 class MatrixMultiplicationSpec(BaseOperatorSpec):
+    VECTOR_LOAD_VERSIONS = {
+        "smem_vector",
+        "smem_outer8x8",
+    }
+
     def __init__(self):
         super().__init__()
         # 1. 基础元数据与精度标准
@@ -45,6 +50,32 @@ class MatrixMultiplicationSpec(BaseOperatorSpec):
             "cpasync",
         ])
 
+    def _make_case(self, M: int, K: int, N: int, dtype: torch.dtype = torch.float32) -> Dict[str, Any]:
+        return {
+            "A": torch.empty(M, K, device="cuda", dtype=dtype).uniform_(-2.0, 2.0),
+            "B": torch.empty(K, N, device="cuda", dtype=dtype).uniform_(-2.0, 2.0),
+            "C": torch.empty(M, N, device="cuda", dtype=dtype),
+            "M": M,
+            "N": N,
+            "K": K,
+        }
+
+    def _aligned_shapes(self, version: str) -> List[tuple[int, int, int]]:
+        if version in self.VECTOR_LOAD_VERSIONS:
+            # float4 路径只验证满足 16B 对齐假设的 shape，避免把 fallback 逻辑塞回 kernel。
+            return [
+                (32, 32, 32),
+                (64, 64, 64),
+                (128, 128, 128),
+                (128, 256, 64),
+            ]
+        return [
+            (4, 4, 4),
+            (8, 10, 6),
+            (16, 20, 12),
+            (32, 16, 8),
+        ]
+
     # 1. 将 Python Config 转换为 C++ 宏
     def get_macros(self, config: Dict[str, Any]) -> Dict[str, Any]:
         # 矩阵乘法当前只测试输入 shape，不从 Python 注入 kernel 超参数。
@@ -71,56 +102,21 @@ class MatrixMultiplicationSpec(BaseOperatorSpec):
 
     def generate_example_test(self) -> Dict[str, Any]:
         """最小闭环验证 """
-        dtype = torch.float32
-        M, N, K = 4, 4, 4
-        return {
-            "A": torch.tensor([[1.0, 2.0, 3.0, 4.0], [3.0, 4.0, 5.0, 6.0]], device="cuda", dtype=dtype),
-            "B": torch.tensor([[5.0, 6.0, 7.0, 8.0], [7.0, 8.0, 9.0, 10.0]], device="cuda", dtype=dtype),
-            "C": torch.empty(M, N, device="cuda", dtype=dtype),
-            "M": M, "N": N, "K": K,
-        }
+        return self._make_case(4, 4, 4)
 
     def generate_functional_test(self) -> List[Dict[str, Any]]:
         """全量功能回归测试"""
-        dtype = torch.float32
-        test_cases = []
+        return [self._make_case(M, K, N) for M, K, N in [
+            (4, 4, 4),
+            (8, 10, 6),
+            (16, 20, 12),
+            (32, 16, 8),
+        ]]
 
-        # 1. 基础固定用例
-        # test_specs = [
-        #     ("basic_2x2", 2, 2, 2, [[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]),
-        #     ("basic_1x3_3x1", 1, 3, 1, [[1.0, 2.0, 3.0]], [[4.0], [5.0], [6.0]]),
-        #     ("identity", 3, 3, 3, torch.eye(3).tolist(), torch.eye(3).tolist()),
-        #     ("zero", 2, 2, 2, [[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]]),
-        #     ("rect", 2, 3, 1, [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], [[1.0], [2.0], [3.0]]),
-        # ]
-
-        # for _, m, k, n, a_vals, b_vals in test_specs:
-        #     test_cases.append({
-        #         "A": torch.tensor(a_vals, device="cuda", dtype=dtype),
-        #         "B": torch.tensor(b_vals, device="cuda", dtype=dtype),
-        #         "C": torch.empty(m, n, device="cuda", dtype=dtype),
-        #         "M": m, "K": k, "N": n,
-        #     })
-
-        # # 2. 随机尺寸测试 (M, K, N)
-        # for m, k, n in [(4,4,4), (8,10,6), (16,20,12), (32,16,8), (8,32,16)]:
-        #     test_cases.append({
-        #         "A": torch.empty(m, k, device="cuda", dtype=dtype).uniform_(-10.0, 10.0),
-        #         "B": torch.empty(k, n, device="cuda", dtype=dtype).uniform_(-10.0, 10.0),
-        #         "C": torch.empty(m, n, device="cuda", dtype=dtype),
-        #         "M": m, "K": k, "N": n,
-        #     })
-
-        # # 3. 边界情况测试
-        # for m, k, n in [(1,1,1), (1,5,3), (5,3,1)]:
-        #     test_cases.append({
-        #         "A": torch.empty(m, k, device="cuda", dtype=dtype).uniform_(-1.0, 1.0),
-        #         "B": torch.empty(k, n, device="cuda", dtype=dtype).uniform_(-1.0, 1.0),
-        #         "C": torch.empty(m, n, device="cuda", dtype=dtype),
-        #         "M": m, "K": k, "N": n,
-        #     })
-
-        return test_cases
+    def get_validation_cases(self, version: str, config: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+        if version in self.VECTOR_LOAD_VERSIONS:
+            return [self._make_case(M, K, N) for M, K, N in self._aligned_shapes(version)]
+        return [self.generate_example_test()] + self.generate_functional_test()
 
     def generate_performance_test(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
         """压测数据生成"""

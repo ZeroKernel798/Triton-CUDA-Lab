@@ -25,7 +25,12 @@ class OperatorRunner:
 
     def validate(self) -> bool:
         """精度验证：最小闭环 + 功能测试"""
-        cases = [self.spec.generate_example_test()] + self.spec.generate_functional_test()
+        version = self.executor.config.get("version", self.executor.op_name)
+        if self.spec.should_skip_validation(version, self.executor.config):
+            log_master(f"      ⏭️ 跳过验证: {version}")
+            return True
+
+        cases = self.spec.get_validation_cases(version, self.executor.config)
         for case in cases:
             try:
                 out = self.executor.run(case)

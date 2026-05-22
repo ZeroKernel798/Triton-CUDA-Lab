@@ -1,9 +1,39 @@
 import torch
+import subprocess
+from typing import Optional
 
 try:
     import pynvml
 except ImportError:
     pynvml = None
+
+
+KNOWN_GPU_SPECS = {
+    # width in bits
+    "NVIDIA GeForce RTX 4090": {"bus_width": 384},
+}
+
+
+def _cores_per_sm(prop) -> int:
+    return 128 if prop.major >= 8 else 64
+
+
+def _query_nvidia_smi_peak_clocks() -> tuple[Optional[float], Optional[float]]:
+    try:
+        out = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=clocks.max.sm,clocks.max.memory",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+        ).strip()
+        if not out:
+            return None, None
+        sm_clock, mem_clock = [float(x.strip()) for x in out.splitlines()[0].split(",")[:2]]
+        return sm_clock, mem_clock
+    except Exception:
+        return None, None
 
 
 def get_peak_device_metrics(device_idx=None):
@@ -19,30 +49,32 @@ def get_peak_device_metrics(device_idx=None):
     if device_idx is None:
         device_idx = torch.cuda.current_device()
 
-    if pynvml is None:
-        return {"peak_bw_gbps": 0.0, "peak_fp32_tflops": 0.0}
+    prop = torch.cuda.get_device_properties(device_idx)
+    total_cores = _cores_per_sm(prop) * prop.multi_processor_count
 
-    pynvml.nvmlInit()
-    try:
-        handle = pynvml.nvmlDeviceGetHandleByIndex(device_idx)
-        prop = torch.cuda.get_device_properties(device_idx)
+    if pynvml is not None:
+        pynvml.nvmlInit()
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(device_idx)
+            bus_width = pynvml.nvmlDeviceGetMemoryBusWidth(handle)
+            mem_clock = pynvml.nvmlDeviceGetMaxClockInfo(handle, pynvml.NVML_CLOCK_MEM)
+            gpu_clock = pynvml.nvmlDeviceGetMaxClockInfo(handle, pynvml.NVML_CLOCK_SM)
+            return {
+                "peak_bw_gbps": (mem_clock * 1e6 * 2 * bus_width / 8) / 1e9,
+                "peak_fp32_tflops": total_cores * gpu_clock * 1e6 * 2 / 1e12,
+            }
+        finally:
+            pynvml.nvmlShutdown()
 
-        cores_per_sm = 128 if prop.major >= 8 else 64
-        total_cores = cores_per_sm * prop.multi_processor_count
-
-        bus_width = pynvml.nvmlDeviceGetMemoryBusWidth(handle)
-        mem_clock = pynvml.nvmlDeviceGetMaxClockInfo(handle, pynvml.NVML_CLOCK_MEM)
-        gpu_clock = pynvml.nvmlDeviceGetMaxClockInfo(handle, pynvml.NVML_CLOCK_SM)
-
-        peak_bw_gbps = (mem_clock * 1e6 * 2 * bus_width / 8) / 1e9
-        peak_fp32_tflops = total_cores * gpu_clock * 1e6 * 2 / 1e12
-
+    sm_clock, mem_clock = _query_nvidia_smi_peak_clocks()
+    bus_width = KNOWN_GPU_SPECS.get(prop.name, {}).get("bus_width")
+    if sm_clock and mem_clock and bus_width:
         return {
-            "peak_bw_gbps": peak_bw_gbps,
-            "peak_fp32_tflops": peak_fp32_tflops,
+            "peak_bw_gbps": (mem_clock * 1e6 * 2 * bus_width / 8) / 1e9,
+            "peak_fp32_tflops": total_cores * sm_clock * 1e6 * 2 / 1e12,
         }
-    finally:
-        pynvml.nvmlShutdown()
+
+    return {"peak_bw_gbps": 0.0, "peak_fp32_tflops": 0.0}
 
 def get_detailed_device_query():
     # 1. 初始化 NVML
@@ -57,7 +89,7 @@ def get_detailed_device_query():
     runtime_ver = torch.version.cuda
     
     # 核心映射 (Ada Lovelace 8.9 = 128 Cores/SM)
-    cores_per_sm = 128 if prop.major >= 8 else 64
+    cores_per_sm = _cores_per_sm(prop)
     total_cores = cores_per_sm * prop.multi_processor_count
     
     # 显存与频率
