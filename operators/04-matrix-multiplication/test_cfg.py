@@ -6,6 +6,11 @@ class MatrixMultiplicationSpec(BaseOperatorSpec):
     VECTOR_LOAD_VERSIONS = {
         "smem_vector",
         "smem_outer8x8",
+        "smem_outer8x8_at",
+        "smem_outer8x8_at_swizzling",
+        "swizzling_mem_coalesced",
+        "double_buffer",
+        "cpasync"
     }
 
     def __init__(self):
@@ -25,29 +30,40 @@ class MatrixMultiplicationSpec(BaseOperatorSpec):
             {"M": 8192, "K": 4096, "N": 8192},
         ]
 
-        # 固定内核配置：这里不再做 BLOCK_X/BLOCK_Y/BLOCK_K 的超参数搜索。
-        # 每个 kernel 只保留一个占位 config，用于让框架明确编译/运行一次。
-        # 真正的 tile/thread 配置使用各源码文件内部的默认值。
-        self.tuning_configs = self.make_configs([
-            {
-                "BLOCK_SIZE_M": 32,
-                "BLOCK_SIZE_N": 32,
-                "BLOCK_SIZE_K": 32,
-                "GROUP_SIZE_M": 8,
-                "num_warps": 4,
-                "num_stages": 2,
-            }
-        ], ["test"])
+        # Triton 配置：只覆盖对齐 tile 形态，避免把搜索空间扩得过大。
+        tile_configs = [
+            {"BLOCK_SIZE_M": 16, "BLOCK_SIZE_N": 32, "BLOCK_SIZE_K": 32, "num_warps": 4, "num_stages": 3},
+            {"BLOCK_SIZE_M": 32, "BLOCK_SIZE_N": 16, "BLOCK_SIZE_K": 32, "num_warps": 4, "num_stages": 3},
+            {"BLOCK_SIZE_M": 32, "BLOCK_SIZE_N": 32, "BLOCK_SIZE_K": 32, "num_warps": 4, "num_stages": 3},
+            {"BLOCK_SIZE_M": 32, "BLOCK_SIZE_N": 64, "BLOCK_SIZE_K": 32, "num_warps": 4, "num_stages": 3},
+            {"BLOCK_SIZE_M": 64, "BLOCK_SIZE_N": 32, "BLOCK_SIZE_K": 32, "num_warps": 4, "num_stages": 3},
+            {"BLOCK_SIZE_M": 64, "BLOCK_SIZE_N": 64, "BLOCK_SIZE_K": 32, "num_warps": 8, "num_stages": 3},
+            {"BLOCK_SIZE_M": 32, "BLOCK_SIZE_N": 64, "BLOCK_SIZE_K": 64, "num_warps": 4, "num_stages": 4},
+            {"BLOCK_SIZE_M": 64, "BLOCK_SIZE_N": 32, "BLOCK_SIZE_K": 64, "num_warps": 4, "num_stages": 4},
+        ]
+        self.tuning_configs = self.make_configs(tile_configs, ["tile"])
+
+        swizzle_configs = [
+            {**cfg, "GROUP_SIZE_M": group_size}
+            for cfg in tile_configs
+            for group_size in (4, 8)
+        ]
+        swizzle_configs.extend([
+            {"BLOCK_SIZE_M": 32, "BLOCK_SIZE_N": 64, "BLOCK_SIZE_K": 32, "GROUP_SIZE_M": 16, "num_warps": 4, "num_stages": 3},
+            {"BLOCK_SIZE_M": 64, "BLOCK_SIZE_N": 32, "BLOCK_SIZE_K": 32, "GROUP_SIZE_M": 16, "num_warps": 4, "num_stages": 3},
+            {"BLOCK_SIZE_M": 64, "BLOCK_SIZE_N": 64, "BLOCK_SIZE_K": 32, "GROUP_SIZE_M": 16, "num_warps": 8, "num_stages": 3},
+        ])
+        self.tuning_configs.extend(self.make_configs(swizzle_configs, ["swizzle"]))
         self.cuda_tuning_configs = self.make_configs([{}], [
             "native",
             "smem",
             "smem_vector",
             "smem_outer8x8",
-            "thread_tile",
-            "thread_tile_opt",
-            "warp_tile",
-            "warp_tile_double_buffer",
-            "cpasync",
+            "smem_outer8x8_at",
+            "smem_outer8x8_at_swizzling",
+            "swizzling_mem_coalesced",
+            "double_buffer",
+            "cpasync"
         ])
 
     def _make_case(self, M: int, K: int, N: int, dtype: torch.dtype = torch.float32) -> Dict[str, Any]:
@@ -114,7 +130,7 @@ class MatrixMultiplicationSpec(BaseOperatorSpec):
         ]]
 
     def get_validation_cases(self, version: str, config: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
-        if version in self.VECTOR_LOAD_VERSIONS:
+        if version in self.VECTOR_LOAD_VERSIONS or version in {"swizzling_mem_coalesced", "double_buffer"}:
             return [self._make_case(M, K, N) for M, K, N in self._aligned_shapes(version)]
         return [self.generate_example_test()] + self.generate_functional_test()
 

@@ -1,4 +1,3 @@
-#include <cuda_runtime.h>
 #include <torch/extension.h>
 
 #ifndef BLOCK_X

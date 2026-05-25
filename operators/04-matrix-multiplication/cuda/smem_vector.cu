@@ -1,6 +1,4 @@
-#include <cuda_runtime.h>
 #include <torch/extension.h>
-#include <string>
 
 // 这里是对每次搬运到共享内存的数据尺寸的定义
 #ifndef BM
