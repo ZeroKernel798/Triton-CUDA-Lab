@@ -60,7 +60,8 @@ def swizzle_matmul_kernel(
         b_data = tl.load(b_ptr, mask=b_mask, other=0.0)
         
         # 做矩阵运算
-        sum += tl.dot(a_data, b_data)
+        # input_precision="ieee": fp32 输入走纯 fp32 FMA（CUDA Core），不用 tf32 Tensor Core
+        sum += tl.dot(a_data, b_data, input_precision="ieee")
         
         # 指针继续往后偏移
         a_ptr += BLOCK_SIZE_K * stride_ak
