@@ -5,7 +5,7 @@
 
 2. smem.cu 实现，通过引入 shared memory + padding，既解决了读写操作不能同时访存合并的问题，也解决了银行冲突导致的 shared memory 读写的问题。会有额外的 shared memory 损耗，且未做向量化读写，未能充分利用显存带宽。
 
-3. smem_float.cu 实现，在上一个版本的基础上，进一步引入了 float4 向量读写，在读取相同数据时，减少了线程数量，同时减轻了指令压力，提高了带宽利用率，但仍然有额外的 shared memory 损耗。但注意平衡单线程的寄存器使用，以及 SM 活跃度的问题。
+3. smem_float4.cu 实现，在上一个版本的基础上，进一步引入了 float4 向量读写，在读取相同数据时，减少了线程数量，同时减轻了指令压力，提高了带宽利用率，但仍然有额外的 shared memory 损耗。但注意平衡单线程的寄存器使用，以及 SM 活跃度的问题。
 
 4. smem_float4_swizzle.cu 实现，在上一个版本的基础上，将 shared memory 的 padding（`tile[32][33]`）替换为 XOR Swizzle（`tile[32][32]`）。Swizzle 以 float4 为粒度对物理列号进行重映射：`phys_f4_col = logical_f4_col XOR (row & 7)`，使同一 warp 中不同行的线程访问不同的 float4 列，从而将 Bank Conflict 从 32-way 降低至 4-way。相比 padding，Swizzle 消除了每行 1 个 float 的额外内存开销（32×32 vs 32×33），在 shared memory 压力较大时有机会多并发一个 block/SM，但实际收益需结合具体矩阵规模与 GPU 型号实测对比。
 
