@@ -35,8 +35,8 @@ class FlashAttentionSpec(BaseOperatorSpec):
         
         # 映射到不同的实现版本
         self.cuda_tuning_configs = self.make_configs(cuda_params, [
-            "flashattentionv1", 
-            "flashattentionv2_opt"
+            "flashattentionv1",
+            "flashattentionv2"
         ])
 
     # 1. 将 Python Config 转换为 C++ 宏

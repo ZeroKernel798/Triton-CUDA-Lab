@@ -72,13 +72,13 @@ def softmax_attention(Q_ptr, K_ptr, V_ptr, OUT_ptr,
         # 把之前的矩阵结果补差价 再加上末尾的值
         # acc = tl.fma(acc, alpha[:, None], tl.dot(softmax_data, V_data))
 
-        # fp16提速
-        softmax_data_fp16 = softmax_data.to(tl.float16)
+        # bf16 提速（走 Tensor Core）
+        softmax_data_bf16 = softmax_data.to(tl.bfloat16)
         # 补齐之前的 acc 差价（这一步依然是 FP32 标量乘法）
         acc = acc * alpha[:, None]
-        # 使用 tl.dot 的累加模式：acc = softmax_data_fp16 * V_data + acc
+        # 使用 tl.dot 的累加模式：acc = softmax_data_bf16 * V_data + acc
         # 这样不仅快，而且利用了现成的 acc 作为累加器
-        acc = tl.dot(softmax_data_fp16, V_data, acc, out_dtype=tl.float32)
+        acc = tl.dot(softmax_data_bf16, V_data, acc, out_dtype=tl.float32)
     
     # 这个地方要处理分母指数和的除法
     acc /= softmax_current_sum[:, None]
@@ -86,13 +86,13 @@ def softmax_attention(Q_ptr, K_ptr, V_ptr, OUT_ptr,
     OUT_offset = offset_M[:, None] * OUT_stride_M + offset_d[None,:] * 1
     OUT_mask = (offset_M[:, None] < M) & (offset_d[None,:] < d)
 
-    tl.store(OUT_ptr + OUT_offset, acc.to(tl.float16), mask=OUT_mask)
+    tl.store(OUT_ptr + OUT_offset, acc.to(tl.bfloat16), mask=OUT_mask)
 
 
 # Q, K, V, output are tensors on the GPU
-def solve(Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, O: torch.Tensor, M: int, N: int, d: int): 
-    #  确保输入是半精度
-    Q, K, V = Q.to(torch.float16), K.to(torch.float16), V.to(torch.float16)  
+def solve(Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, O: torch.Tensor, M: int, N: int, d: int, **kwargs):
+    #  确保输入是 bf16（走 Tensor Core）
+    Q, K, V = Q.to(torch.bfloat16), K.to(torch.bfloat16), V.to(torch.bfloat16)
     
     # 设置block大小 
     BLOCKSIZE_M = 32
